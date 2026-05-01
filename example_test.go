@@ -16,10 +16,12 @@ func ExampleNewBridgeDetector() {
 	_ = d
 }
 
-// ExampleBridgeDetector_DetectInstructionBridges shows the common path
-// for instruction-mode detection: pass the raw program log strings from
-// a Solana transaction and read off the bridge name and leg type.
-func ExampleBridgeDetector_DetectInstructionBridges() {
+// ExampleBridgeDetector_Detect shows the common path: pass the raw program
+// log strings from a Solana transaction and read off each detection. A
+// Detection with a populated CorrelationID is fully resolved; one with a
+// non-nil Resolution requires the caller to fetch the relevant account or
+// instruction data from RPC and feed it through the package helpers.
+func ExampleBridgeDetector_Detect() {
 	d, _ := bridgesolana.NewBridgeDetector()
 
 	logs := []string{
@@ -28,11 +30,9 @@ func ExampleBridgeDetector_DetectInstructionBridges() {
 		"Program CCTPmbSD7gX1bxKPAmg77w8oFzNFpaQiQUWD43TKaecd success",
 	}
 
-	for _, det := range d.DetectInstructionBridges(logs) {
-		fmt.Printf("%s %s leg on %s\n",
-			det.Subscription.BridgeName,
-			det.Subscription.BridgeLegType,
-			det.ProgramID)
+	for _, det := range d.Detect(logs) {
+		fmt.Printf("%s %s leg (needs RPC follow-up: %t)\n",
+			det.BridgeName, det.BridgeLegType, det.Resolution != nil)
 	}
-	// Output: cctp destination leg on CCTPmbSD7gX1bxKPAmg77w8oFzNFpaQiQUWD43TKaecd
+	// Output: cctp destination leg (needs RPC follow-up: true)
 }

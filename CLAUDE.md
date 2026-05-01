@@ -108,6 +108,12 @@ trailers on every commit.
 **Solo author only.** Do not add `Co-Authored-By:` trailers (including
 Claude). The DCO sign-off is the only trailer.
 
+## Code organization
+
+Within each Go file, keep public declarations at the top and private
+helpers at the bottom. Order: types/funcs the API consumer cares about
+first, internal supporting code last.
+
 ## Pre-push checks
 
 Install hooks once: `make setup-hooks` (copies `.githooks/pre-push` and

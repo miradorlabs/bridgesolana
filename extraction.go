@@ -16,7 +16,7 @@ const CorrelationDelimiter = ":"
 // ExtractCorrelationFields extracts correlation field values from decoded
 // event data and joins them with CorrelationDelimiter. The data parameter
 // is the full decoded event bytes (including any 8-byte discriminator).
-func ExtractCorrelationFields(data []byte, fields []correlationField) (string, error) {
+func ExtractCorrelationFields(data []byte, fields []CorrelationField) (string, error) {
 	if len(fields) == 0 {
 		return "", fmt.Errorf("no correlation fields configured")
 	}
@@ -31,25 +31,6 @@ func ExtractCorrelationFields(data []byte, fields []correlationField) (string, e
 	}
 
 	return strings.Join(parts, CorrelationDelimiter), nil
-}
-
-// ExtractPayload extracts a Borsh Vec<u8> payload from raw data, skipping
-// headerSize bytes. Layout: header(headerSize) + Vec<u8> (4-byte LE length
-// prefix + data).
-func ExtractPayload(data []byte, headerSize int) ([]byte, error) {
-	if len(data) < headerSize+4 {
-		return nil, fmt.Errorf("data too short: need %d bytes, have %d", headerSize+4, len(data))
-	}
-
-	vecLen := binary.LittleEndian.Uint32(data[headerSize : headerSize+4])
-	dataStart := headerSize + 4
-	dataEnd := dataStart + int(vecLen)
-
-	if dataEnd > len(data) {
-		return nil, fmt.Errorf("vec length %d exceeds data (available: %d bytes)", vecLen, len(data)-dataStart)
-	}
-
-	return data[dataStart:dataEnd], nil
 }
 
 // ParseMessageSentAccount extracts CCTP message bytes from a MessageSent
@@ -71,17 +52,36 @@ func ParseMessageSentAccount(data []byte, version int) ([]byte, error) {
 		return nil, fmt.Errorf("unsupported message version %d", version)
 	}
 
-	return ExtractPayload(data, headerSize)
+	return extractPayload(data, headerSize)
 }
 
 // ParseReceiveMessageInstructionData extracts CCTP message bytes from
 // ReceiveMessage instruction data. Layout: Anchor discriminator(8) +
 // Vec<u8> (4-byte LE length + data).
 func ParseReceiveMessageInstructionData(data []byte) ([]byte, error) {
-	return ExtractPayload(data, 8)
+	return extractPayload(data, 8)
 }
 
-func extractFieldValue(data []byte, field correlationField) (string, error) {
+// extractPayload extracts a Borsh Vec<u8> payload from raw data, skipping
+// headerSize bytes. Layout: header(headerSize) + Vec<u8> (4-byte LE length
+// prefix + data).
+func extractPayload(data []byte, headerSize int) ([]byte, error) {
+	if len(data) < headerSize+4 {
+		return nil, fmt.Errorf("data too short: need %d bytes, have %d", headerSize+4, len(data))
+	}
+
+	vecLen := binary.LittleEndian.Uint32(data[headerSize : headerSize+4])
+	dataStart := headerSize + 4
+	dataEnd := dataStart + int(vecLen)
+
+	if dataEnd > len(data) {
+		return nil, fmt.Errorf("vec length %d exceeds data (available: %d bytes)", vecLen, len(data)-dataStart)
+	}
+
+	return data[dataStart:dataEnd], nil
+}
+
+func extractFieldValue(data []byte, field CorrelationField) (string, error) {
 	typ := strings.ToLower(strings.TrimSpace(field.Type))
 
 	// keccak256 hashes from offset to end; does not use field.Size.

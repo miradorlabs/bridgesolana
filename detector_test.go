@@ -1,16 +1,13 @@
 package bridgesolana
 
 import (
+	"reflect"
+	"sort"
 	"testing"
-
-	"go.uber.org/zap"
 )
 
-func TestDetectInstructionBridges_CCTPv1Source(t *testing.T) {
-	detector, err := NewBridgeDetector()
-	if err != nil {
-		t.Fatalf("failed to create detector: %v", err)
-	}
+func TestDetect_CCTPv1Source(t *testing.T) {
+	d := newDetector(t)
 
 	logs := []string{
 		"Program CCTPiPYPc6AsJuwueEnWgSgucamXDZwBd53dQ11YiKX3 invoke [1]",
@@ -21,29 +18,36 @@ func TestDetectInstructionBridges_CCTPv1Source(t *testing.T) {
 		"Program CCTPiPYPc6AsJuwueEnWgSgucamXDZwBd53dQ11YiKX3 success",
 	}
 
-	detections := detector.DetectInstructionBridges(logs)
-	if len(detections) != 1 {
-		t.Fatalf("expected 1 detection, got %d", len(detections))
+	got := d.Detect(logs)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 detection, got %d", len(got))
 	}
-
-	d := detections[0]
-	if d.Subscription.BridgeLegType != LegTypeSource {
-		t.Fatalf("expected source leg type, got %v", d.Subscription.BridgeLegType)
+	det := got[0]
+	if det.BridgeName != "cctp" {
+		t.Fatalf("BridgeName = %q, want %q", det.BridgeName, "cctp")
 	}
-	if d.Subscription.BridgeName != "cctp" {
-		t.Fatalf("expected bridge name 'cctp', got %q", d.Subscription.BridgeName)
+	if det.BridgeLegType != LegTypeSource {
+		t.Fatalf("BridgeLegType = %q, want %q", det.BridgeLegType, LegTypeSource)
 	}
-	// ProgramID is the executing program when the instruction was detected (MessageTransmitter).
-	if d.ProgramID != "CCTPmbSD7gX1bxKPAmg77w8oFzNFpaQiQUWD43TKaecd" {
-		t.Fatalf("expected program ID CCTPmbSD7gX1bxKPAmg77w8oFzNFpaQiQUWD43TKaecd, got %q", d.ProgramID)
+	if det.CorrelationID != "" {
+		t.Fatalf("CorrelationID should be empty for instruction mode, got %q", det.CorrelationID)
+	}
+	if det.Resolution == nil {
+		t.Fatal("Resolution must be non-nil for instruction-mode detection")
+	}
+	if det.Resolution.MessageProgramID != "CCTPmbSD7gX1bxKPAmg77w8oFzNFpaQiQUWD43TKaecd" {
+		t.Fatalf("Resolution.MessageProgramID = %q", det.Resolution.MessageProgramID)
+	}
+	if det.Resolution.AccountDiscriminator == ([8]byte{}) {
+		t.Fatal("Resolution.AccountDiscriminator must be set for source legs")
+	}
+	if det.Resolution.MessageVersion != 0 {
+		t.Fatalf("Resolution.MessageVersion = %d, want 0 (V1)", det.Resolution.MessageVersion)
 	}
 }
 
-func TestDetectInstructionBridges_CCTPv1Destination(t *testing.T) {
-	detector, err := NewBridgeDetector()
-	if err != nil {
-		t.Fatalf("failed to create detector: %v", err)
-	}
+func TestDetect_CCTPv1Destination(t *testing.T) {
+	d := newDetector(t)
 
 	logs := []string{
 		"Program CCTPmbSD7gX1bxKPAmg77w8oFzNFpaQiQUWD43TKaecd invoke [1]",
@@ -51,60 +55,50 @@ func TestDetectInstructionBridges_CCTPv1Destination(t *testing.T) {
 		"Program CCTPmbSD7gX1bxKPAmg77w8oFzNFpaQiQUWD43TKaecd success",
 	}
 
-	detections := detector.DetectInstructionBridges(logs)
-	if len(detections) != 1 {
-		t.Fatalf("expected 1 detection, got %d", len(detections))
+	got := d.Detect(logs)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 detection, got %d", len(got))
 	}
-
-	d := detections[0]
-	if d.Subscription.BridgeLegType != LegTypeDestination {
-		t.Fatalf("expected destination leg type, got %v", d.Subscription.BridgeLegType)
+	det := got[0]
+	if det.BridgeLegType != LegTypeDestination {
+		t.Fatalf("BridgeLegType = %q, want %q", det.BridgeLegType, LegTypeDestination)
+	}
+	if det.Resolution == nil {
+		t.Fatal("Resolution must be non-nil")
+	}
+	// Destination legs leave AccountDiscriminator as zero.
+	if det.Resolution.AccountDiscriminator != ([8]byte{}) {
+		t.Fatalf("AccountDiscriminator should be zero for destination legs, got %x", det.Resolution.AccountDiscriminator)
 	}
 }
 
-func TestDetectInstructionBridges_NoMatch(t *testing.T) {
-	detector, err := NewBridgeDetector()
-	if err != nil {
-		t.Fatalf("failed to create detector: %v", err)
-	}
-
+func TestDetect_NoMatch(t *testing.T) {
+	d := newDetector(t)
 	logs := []string{
 		"Program SomeOtherProgram111111111111111111111111 invoke [1]",
 		"Program log: Instruction: Transfer",
 		"Program SomeOtherProgram111111111111111111111111 success",
 	}
-
-	detections := detector.DetectInstructionBridges(logs)
-	if len(detections) != 0 {
-		t.Fatalf("expected 0 detections, got %d", len(detections))
+	if got := d.Detect(logs); len(got) != 0 {
+		t.Fatalf("expected 0 detections, got %d", len(got))
 	}
 }
 
-func TestDetectInstructionBridges_ProgramScopedCorrectly(t *testing.T) {
-	detector, err := NewBridgeDetector()
-	if err != nil {
-		t.Fatalf("failed to create detector: %v", err)
-	}
-
-	// SendMessage outside of the CCTP program context should not trigger.
+func TestDetect_ProgramScopedCorrectly(t *testing.T) {
+	d := newDetector(t)
+	// SendMessage outside of any CCTP program context must not trigger.
 	logs := []string{
 		"Program SomeOtherProgram111111111111111111111111 invoke [1]",
 		"Program log: Instruction: SendMessage",
 		"Program SomeOtherProgram111111111111111111111111 success",
 	}
-
-	detections := detector.DetectInstructionBridges(logs)
-	if len(detections) != 0 {
-		t.Fatalf("expected 0 detections for wrong program, got %d", len(detections))
+	if got := d.Detect(logs); len(got) != 0 {
+		t.Fatalf("expected 0 detections, got %d", len(got))
 	}
 }
 
-func TestDetectInstructionBridges_V2Source(t *testing.T) {
-	detector, err := NewBridgeDetector()
-	if err != nil {
-		t.Fatalf("failed to create detector: %v", err)
-	}
-
+func TestDetect_CCTPv2Source(t *testing.T) {
+	d := newDetector(t)
 	logs := []string{
 		"Program CCTPV2vPZJS2u2BBsUoscuikbYjnpFmbFsvVuJdgUMQe invoke [1]",
 		"Program log: Instruction: DepositForBurn",
@@ -113,59 +107,48 @@ func TestDetectInstructionBridges_V2Source(t *testing.T) {
 		"Program CCTPV2Sm4AdWt5296sk4P66VBZ7bEhcARwFaaS9YPbeC success",
 		"Program CCTPV2vPZJS2u2BBsUoscuikbYjnpFmbFsvVuJdgUMQe success",
 	}
-
-	detections := detector.DetectInstructionBridges(logs)
-	if len(detections) != 1 {
-		t.Fatalf("expected 1 detection, got %d", len(detections))
+	got := d.Detect(logs)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 detection, got %d", len(got))
 	}
-
-	d := detections[0]
-	if d.Subscription.BridgeName != "cctp-v2" {
-		t.Fatalf("expected bridge name 'cctp-v2', got %q", d.Subscription.BridgeName)
+	if got[0].BridgeName != "cctp-v2" {
+		t.Fatalf("BridgeName = %q, want cctp-v2", got[0].BridgeName)
 	}
-}
-
-func TestDetectFromLogs_NoLogModeSubscriptions(t *testing.T) {
-	// All bundled CCTP configs are instruction-mode; DetectFromLogs should find nothing.
-	detector, err := NewBridgeDetector()
-	if err != nil {
-		t.Fatalf("failed to create detector: %v", err)
-	}
-
-	logs := []string{
-		"Program CCTPiPYPc6AsJuwueEnWgSgucamXDZwBd53dQ11YiKX3 invoke [1]",
-		"Program data: AAAAAAAAAAAAAAAAAAAAAA==",
-		"Program CCTPiPYPc6AsJuwueEnWgSgucamXDZwBd53dQ11YiKX3 success",
-	}
-
-	details := detector.DetectFromLogs(logs)
-	if len(details) != 0 {
-		t.Fatalf("expected 0 log-mode detections (all are instruction-mode), got %d", len(details))
+	if got[0].Resolution == nil || got[0].Resolution.MessageVersion != 1 {
+		t.Fatalf("expected V2 resolution (MessageVersion=1), got %+v", got[0].Resolution)
 	}
 }
 
-func TestResolver_ProgramIDs(t *testing.T) {
-	r := NewResolver(zap.NewNop())
-	ids, err := r.ProgramIDs()
+func TestProgramIDs(t *testing.T) {
+	d := newDetector(t)
+	got := d.ProgramIDs()
+	want := []string{
+		"CCTPV2Sm4AdWt5296sk4P66VBZ7bEhcARwFaaS9YPbeC",
+		"CCTPV2vPZJS2u2BBsUoscuikbYjnpFmbFsvVuJdgUMQe",
+		"CCTPiPYPc6AsJuwueEnWgSgucamXDZwBd53dQ11YiKX3",
+		"CCTPmbSD7gX1bxKPAmg77w8oFzNFpaQiQUWD43TKaecd",
+	}
+	sort.Strings(want)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ProgramIDs mismatch\n got: %v\nwant: %v", got, want)
+	}
+}
+
+func TestProgramIDs_ReturnsCopy(t *testing.T) {
+	d := newDetector(t)
+	first := d.ProgramIDs()
+	first[0] = "tampered"
+	second := d.ProgramIDs()
+	if second[0] == "tampered" {
+		t.Fatal("ProgramIDs must return a fresh slice; mutation leaked into detector state")
+	}
+}
+
+func newDetector(t *testing.T) *BridgeDetector {
+	t.Helper()
+	d, err := NewBridgeDetector()
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("NewBridgeDetector: %v", err)
 	}
-	// 4 bridge configs across 4 distinct (programID, messageProgramID) pairs.
-	expected := map[string]bool{
-		"CCTPiPYPc6AsJuwueEnWgSgucamXDZwBd53dQ11YiKX3": false,
-		"CCTPmbSD7gX1bxKPAmg77w8oFzNFpaQiQUWD43TKaecd": false,
-		"CCTPV2vPZJS2u2BBsUoscuikbYjnpFmbFsvVuJdgUMQe": false,
-		"CCTPV2Sm4AdWt5296sk4P66VBZ7bEhcARwFaaS9YPbeC": false,
-	}
-	for _, id := range ids {
-		if _, ok := expected[id]; !ok {
-			t.Fatalf("unexpected program ID %q", id)
-		}
-		expected[id] = true
-	}
-	for id, seen := range expected {
-		if !seen {
-			t.Fatalf("missing expected program ID %q", id)
-		}
-	}
+	return d
 }

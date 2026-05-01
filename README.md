@@ -10,32 +10,34 @@ Detect cross-chain bridge events from Solana program logs.
 > **Status:** pre-1.0. The public API may change in any `0.x.0` release; patch
 > releases (`0.x.y`) will not break callers. See [CHANGELOG.md](CHANGELOG.md).
 
-Build a `BridgeDetector` once at process start, then hand it the raw log strings from a Solana transaction. The detector supports two complementary modes:
+Build a `BridgeDetector` once at process start, then hand it the raw log strings from a Solana transaction's metadata. `Detect` returns one `Detection` per matched bridge event.
 
-- **Log mode** (`DetectFromLogs`) — scans `Program data:` lines, decodes base64, matches 8-byte Anchor discriminators, and returns `BridgeDetails` directly with the bridge name, leg type, and correlation ID.
-- **Instruction mode** (`DetectInstructionBridges`) — scans `Program log: Instruction: <Name>` lines within target program invocations and returns `InstructionDetection` records. Callers then resolve the correlation ID by reading the relevant account or instruction data from RPC and feeding it into `ExtractPayload` / `ExtractCorrelationFields`.
+A `Detection` carries the bridge identity (name, description, leg type) plus one of:
+
+- A populated `CorrelationID` — extracted in-band from an Anchor `Program data:` event. The detection is fully resolved.
+- A non-nil `Resolution` — the bridge fires through a CPI without emitting an event. The caller fetches the relevant on-chain data via RPC and feeds it through the package helpers (`ParseMessageSentAccount` / `ParseReceiveMessageInstructionData`, then `ExtractCorrelationFields`) to produce the correlation ID.
 
 ```go
-import (
-    "github.com/miradorlabs/bridgesolana"
-)
+import "github.com/miradorlabs/bridgesolana"
 
-detector, err := bridgesolana.NewBridgeDetector()
+d, err := bridgesolana.NewBridgeDetector()
 if err != nil {
     log.Fatal(err)
 }
 
-// Log-mode detections (self-contained — correlation ID extracted in-band).
-for _, d := range detector.DetectFromLogs(logs) {
-    fmt.Printf("%s %s leg, correlation %s\n",
-        d.BridgeName, d.BridgeLegType, d.CorrelationID)
-}
+for _, det := range d.Detect(logs) {
+    if det.Resolution == nil {
+        // Log-mode: correlation ID is already extracted.
+        fmt.Printf("%s %s leg, correlation %s\n",
+            det.BridgeName, det.BridgeLegType, det.CorrelationID)
+        continue
+    }
 
-// Instruction-mode detections (need RPC follow-up to read the message bytes).
-for _, det := range detector.DetectInstructionBridges(logs) {
-    sub := det.Subscription
-    fmt.Printf("%s %s leg fired in %s — fetch instruction/account data and call ExtractPayload\n",
-        sub.BridgeName, sub.BridgeLegType, det.ProgramID)
+    // Instruction-mode: fetch the message bytes via RPC, then extract.
+    msgBytes, _ := bridgesolana.ParseMessageSentAccount(accountData, det.Resolution.MessageVersion)
+    correlationID, _ := bridgesolana.ExtractCorrelationFields(msgBytes, det.Resolution.Correlation)
+    fmt.Printf("%s %s leg, correlation %s\n",
+        det.BridgeName, det.BridgeLegType, correlationID)
 }
 ```
 
@@ -54,19 +56,29 @@ for _, det := range detector.DetectInstructionBridges(logs) {
 type BridgeDetector struct{ /* ... */ }
 
 func NewBridgeDetector() (*BridgeDetector, error)
-func (d *BridgeDetector) DetectFromLogs(logs []string) []*BridgeDetails
-func (d *BridgeDetector) DetectInstructionBridges(logs []string) []*InstructionDetection
+func (d *BridgeDetector) Detect(logs []string) []Detection
+func (d *BridgeDetector) ProgramIDs() []string
 
-type BridgeDetails struct {
-    BridgeLegType     LegType    // "source" or "destination"
-    CorrelationID     string
+type Detection struct {
     BridgeName        string
     BridgeDescription string
+    BridgeLegType     LegType
+    CorrelationID     string      // populated for log-mode detections
+    Resolution        *Resolution // non-nil for instruction-mode detections
 }
 
-type InstructionDetection struct {
-    Subscription *BridgeSubscription
-    ProgramID    string
+type Resolution struct {
+    MessageProgramID     string
+    AccountDiscriminator [8]byte // source legs only (zero for destination)
+    MessageVersion       int     // 0 = V1, 1 = V2
+    Correlation          []CorrelationField
+}
+
+type CorrelationField struct {
+    Offset int
+    Size   int
+    Type   string
+    Field  string
 }
 
 type LegType string
@@ -75,17 +87,10 @@ const (
     LegTypeDestination LegType = "destination"
 )
 
-// Lower-level helpers for instruction-mode RPC resolution.
-func ExtractPayload(data []byte, headerSize int) ([]byte, error)
-func ExtractCorrelationFields(data []byte, fields []correlationField) (string, error)
+// RPC follow-up helpers for instruction-mode detections.
 func ParseMessageSentAccount(data []byte, version int) ([]byte, error)
 func ParseReceiveMessageInstructionData(data []byte) ([]byte, error)
-
-// Build subscriptions and program-ID lists for an RPC subscriber.
-type Resolver struct{ /* ... */ }
-func NewResolver(logger *zap.Logger) *Resolver
-func (r *Resolver) Subscriptions() ([]*BridgeSubscription, error)
-func (r *Resolver) ProgramIDs() ([]string, error)
+func ExtractCorrelationFields(data []byte, fields []CorrelationField) (string, error)
 ```
 
 A `BridgeDetector` is read-only after construction and safe to share across goroutines.
@@ -95,12 +100,12 @@ A `BridgeDetector` is read-only after construction and safe to share across goro
 Bridge configurations are embedded JSON, one file per protocol (currently `config/cctp.json`). Each entry declares the program ID, the event or instruction name, and how to extract the correlation ID from the decoded payload — by fixed-offset uint64/uint32/bytes32 fields, or as a keccak256 hash of the message tail.
 
 `NewBridgeDetector` builds two `O(1)` lookup maps:
-- discriminator → subscription (log mode)
-- (programID, instructionName) → subscription (instruction mode)
+- discriminator → log-mode subscription
+- (programID, instructionName) → instruction-mode subscription
 
-Detection is a streaming scan of the log lines, tracking the program invocation stack so that instruction names are only matched within their owning program's context.
+`Detect` is a streaming scan of the log lines that tracks the program invocation stack, so instruction names are only matched within their owning program's context.
 
-For instruction-mode source legs, the correlation ID lives in the on-chain `MessageSent` account whose data layout depends on the message version (v1 vs v2). Use `ParseMessageSentAccount` after fetching the account from RPC. For destination legs, the correlation ID lives in the `ReceiveMessage` instruction data — use `ParseReceiveMessageInstructionData` once you've located that instruction in the transaction.
+For instruction-mode source legs, the correlation ID lives in the on-chain `MessageSent` account whose layout depends on the message version (V1 vs V2). For destination legs, it lives in the `ReceiveMessage` instruction data. The `Resolution` returned with each detection carries everything the caller needs to fetch and parse it.
 
 ## License
 
