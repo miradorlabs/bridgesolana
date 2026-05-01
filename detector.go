@@ -4,7 +4,8 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 )
 
@@ -35,11 +36,7 @@ func NewBridgeDetector() (*BridgeDetector, error) {
 		}
 	}
 
-	d.progIDs = make([]string, 0, len(progSet))
-	for id := range progSet {
-		d.progIDs = append(d.progIDs, id)
-	}
-	sort.Strings(d.progIDs)
+	d.progIDs = slices.Sorted(maps.Keys(progSet))
 
 	return d, nil
 }
@@ -55,14 +52,14 @@ func (d *BridgeDetector) ProgramIDs() []string {
 }
 
 // Detect scans logs (the raw "Program ..." strings from a single Solana
-// transaction's metadata) and returns one Detection per matched bridge
+// transaction's metadata) and returns one [Detection] per matched bridge
 // event. The detector tracks the program invocation stack across log
 // lines, so both "Program data:" events and "Program log: Instruction:"
 // lines are scoped to the program currently executing.
 //
-// A Detection with a non-empty CorrelationID is fully resolved. A
-// Detection with a non-nil Resolution requires the caller to fetch the
-// relevant account or instruction data via RPC and call the package
+// A [Detection] with a non-empty CorrelationID is fully resolved. A
+// [Detection] with a non-nil [Resolution] requires the caller to fetch
+// the relevant account or instruction data via RPC and call the package
 // helpers to extract the correlation ID.
 func (d *BridgeDetector) Detect(logs []string) []Detection {
 	if len(d.logSubs) == 0 && len(d.instrSubs) == 0 {
@@ -103,6 +100,9 @@ func (d *BridgeDetector) Detect(logs []string) []Detection {
 				name := strings.TrimPrefix(trimmed, instrLogPrefix)
 				if sub, ok := d.instrSubs[instructionKey{programID: current, instructionName: name}]; ok {
 					res := sub.resolution
+					// Defensive copy: callers must not mutate detector state
+					// through Resolution.Correlation.
+					res.Correlation = cloneCorrelation(res.Correlation)
 					out = append(out, Detection{
 						BridgeName:        sub.bridgeName,
 						BridgeDescription: sub.bridgeDesc,

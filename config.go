@@ -19,11 +19,7 @@ const (
 //go:embed config/*.json
 var bridgeConfigFS embed.FS
 
-var (
-	loadOnce sync.Once
-	loadErr  error
-	configs  []*bridgeConfig
-)
+var loadConfigs = sync.OnceValues(loadBridgeConfigs)
 
 // bridgeConfig is the JSON-serialized shape of a Solana bridge definition.
 type bridgeConfig struct {
@@ -56,11 +52,12 @@ type bridgeEvent struct {
 
 // allConfigs returns all embedded Solana bridge definitions.
 func allConfigs() ([]*bridgeConfig, error) {
-	if err := ensureLoaded(); err != nil {
+	cfgs, err := loadConfigs()
+	if err != nil {
 		return nil, err
 	}
-	out := make([]*bridgeConfig, len(configs))
-	copy(out, configs)
+	out := make([]*bridgeConfig, len(cfgs))
+	copy(out, cfgs)
 	return out, nil
 }
 
@@ -72,13 +69,6 @@ func computeAnchorDiscriminator(anchorType, name string) [8]byte {
 	var disc [8]byte
 	copy(disc[:], hash[:8])
 	return disc
-}
-
-func ensureLoaded() error {
-	loadOnce.Do(func() {
-		configs, loadErr = loadBridgeConfigs()
-	})
-	return loadErr
 }
 
 func loadBridgeConfigs() ([]*bridgeConfig, error) {

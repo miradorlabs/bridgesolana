@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math/big"
+	"strconv"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/crypto"
@@ -37,8 +38,8 @@ func ExtractCorrelationFields(data []byte, fields []CorrelationField) (string, e
 
 // ParseMessageSentAccount extracts CCTP message bytes from a MessageSent
 // account's raw data. Pass the version returned in
-// Resolution.MessageVersion; only 0 (CCTP V1) and 1 (CCTP V2) are valid
-// and any other value returns an error.
+// [Resolution.MessageVersion]; only 0 (CCTP V1) and 1 (CCTP V2) are
+// valid and any other value returns an error.
 //
 // Account layout:
 //   - V1 (version=0): discriminator(8) + rent_payer(32) + Vec<u8> at offset 40.
@@ -112,25 +113,25 @@ func extractFieldValue(data []byte, field CorrelationField) (string, error) {
 		if field.Size != 8 {
 			return "", fmt.Errorf("uint64_le requires 8 bytes, got %d", field.Size)
 		}
-		return fmt.Sprintf("%d", binary.LittleEndian.Uint64(rawBytes)), nil
+		return strconv.FormatUint(binary.LittleEndian.Uint64(rawBytes), 10), nil
 
 	case "uint32_le":
 		if field.Size != 4 {
 			return "", fmt.Errorf("uint32_le requires 4 bytes, got %d", field.Size)
 		}
-		return fmt.Sprintf("%d", binary.LittleEndian.Uint32(rawBytes)), nil
+		return strconv.FormatUint(uint64(binary.LittleEndian.Uint32(rawBytes)), 10), nil
 
 	case "uint64":
 		if field.Size != 8 {
 			return "", fmt.Errorf("uint64 requires 8 bytes, got %d", field.Size)
 		}
-		return fmt.Sprintf("%d", binary.BigEndian.Uint64(rawBytes)), nil
+		return strconv.FormatUint(binary.BigEndian.Uint64(rawBytes), 10), nil
 
 	case "uint32":
 		if field.Size != 4 {
 			return "", fmt.Errorf("uint32 requires 4 bytes, got %d", field.Size)
 		}
-		return fmt.Sprintf("%d", binary.BigEndian.Uint32(rawBytes)), nil
+		return strconv.FormatUint(uint64(binary.BigEndian.Uint32(rawBytes)), 10), nil
 
 	case "bytes32":
 		if field.Size != 32 {

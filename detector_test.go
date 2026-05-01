@@ -3,8 +3,7 @@ package bridgesolana
 import (
 	"encoding/base64"
 	"encoding/binary"
-	"reflect"
-	"sort"
+	"slices"
 	"testing"
 )
 
@@ -130,8 +129,8 @@ func TestProgramIDs(t *testing.T) {
 		"CCTPiPYPc6AsJuwueEnWgSgucamXDZwBd53dQ11YiKX3",
 		"CCTPmbSD7gX1bxKPAmg77w8oFzNFpaQiQUWD43TKaecd",
 	}
-	sort.Strings(want)
-	if !reflect.DeepEqual(got, want) {
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
 		t.Fatalf("ProgramIDs mismatch\n got: %v\nwant: %v", got, want)
 	}
 }
