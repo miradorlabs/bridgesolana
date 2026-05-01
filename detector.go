@@ -158,7 +158,8 @@ func (d *BridgeDetector) addSubscription(cfg *bridgeConfig, progSet map[string]s
 			resolution: Resolution{
 				MessageProgramID:         cfg.BridgeEvent.MessageProgramID,
 				AccountDiscriminator:     accountDisc,
-				messageVersion:           cfg.BridgeEvent.MessageVersion,
+				accountHeaderSize:        cfg.BridgeEvent.AccountDataHeaderSize,
+				instructionHeaderSize:    cfg.BridgeEvent.DataHeaderSize,
 				instructionDiscriminator: instrDisc,
 				correlation:              cloneCorrelation(cfg.BridgeEvent.Correlation),
 			},

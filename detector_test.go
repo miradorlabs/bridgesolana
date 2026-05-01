@@ -42,8 +42,8 @@ func TestDetect_CCTPv1Source(t *testing.T) {
 	if det.Resolution.AccountDiscriminator == ([8]byte{}) {
 		t.Fatal("Resolution.AccountDiscriminator must be set for source legs")
 	}
-	if det.Resolution.messageVersion != 0 {
-		t.Fatalf("Resolution.messageVersion = %d, want 0 (V1)", det.Resolution.messageVersion)
+	if det.Resolution.accountHeaderSize != 40 {
+		t.Fatalf("Resolution.accountHeaderSize = %d, want 40 (CCTP V1)", det.Resolution.accountHeaderSize)
 	}
 }
 
@@ -119,8 +119,8 @@ func TestDetect_CCTPv2Source(t *testing.T) {
 	if got[0].BridgeName != "cctp-v2" {
 		t.Fatalf("BridgeName = %q, want cctp-v2", got[0].BridgeName)
 	}
-	if got[0].Resolution == nil || got[0].Resolution.messageVersion != 1 {
-		t.Fatalf("expected V2 resolution (messageVersion=1), got %+v", got[0].Resolution)
+	if got[0].Resolution == nil || got[0].Resolution.accountHeaderSize != 48 {
+		t.Fatalf("expected V2 resolution accountHeaderSize=48, got %+v", got[0].Resolution)
 	}
 }
 

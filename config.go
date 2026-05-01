@@ -43,12 +43,11 @@ type bridgeEvent struct {
 
 	// Instruction-mode fields.
 	DetectionMode            string `json:"detectionMode,omitempty"`            // "log" (default) or "instruction".
-	MessageVersion           int    `json:"messageVersion,omitempty"`           // 0 = v1 (uint64 nonce), 1 = v2 (bytes32 nonce).
-	AccountDiscriminator     string `json:"accountDiscriminator,omitempty"`     // Hex 8-byte discriminator gating the source MessageSent account.
-	InstructionDiscriminator string `json:"instructionDiscriminator,omitempty"` // Hex 8-byte Anchor discriminator gating destination ReceiveMessage instruction data.
-	MessageProgramID         string `json:"messageProgramId,omitempty"`         // Program holding the MessageSent account or instruction data.
-	DataHeaderSize           int    `json:"dataHeaderSize,omitempty"`           // Destination: bytes before Vec in instruction data.
-	AccountDataHeaderSize    int    `json:"accountDataHeaderSize,omitempty"`    // Source: bytes before Vec in account data.
+	AccountDiscriminator     string `json:"accountDiscriminator,omitempty"`     // Hex 8-byte discriminator gating the source account.
+	InstructionDiscriminator string `json:"instructionDiscriminator,omitempty"` // Hex 8-byte Anchor discriminator gating destination instruction data.
+	MessageProgramID         string `json:"messageProgramId,omitempty"`         // Program holding the source account or destination instruction data.
+	AccountDataHeaderSize    int    `json:"accountDataHeaderSize,omitempty"`    // Source: bytes before the Vec<u8> message body in the account data.
+	DataHeaderSize           int    `json:"dataHeaderSize,omitempty"`           // Destination: bytes before the Vec<u8> message body in the instruction data; defaults to 8 (Anchor instruction discriminator).
 }
 
 // allConfigs returns all embedded Solana bridge definitions.
@@ -168,29 +167,41 @@ func validateInstructionMode(filename string, idx int, ev *bridgeEvent) error {
 	if ev.MessageProgramID == "" {
 		return fmt.Errorf("bridge config %s[%d] missing bridgeEvent.messageProgramId for instruction mode", filename, idx)
 	}
-	// Default destination dataHeaderSize: 8 bytes (anchor discriminator).
-	if ev.Type == string(LegTypeDestination) && ev.DataHeaderSize == 0 {
-		ev.DataHeaderSize = 8
+	if ev.Type == string(LegTypeDestination) {
+		// Destination legs must declare the instruction discriminator
+		// so Resolve can reject wrong-shape data.
+		if ev.InstructionDiscriminator == "" {
+			return fmt.Errorf("bridge config %s[%d] missing bridgeEvent.instructionDiscriminator for instruction-mode destination leg", filename, idx)
+		}
+		// Reject negative dataHeaderSize before defaulting — a negative
+		// value would feed extractVecPayload a negative slice index and
+		// panic at parse time.
+		if ev.DataHeaderSize < 0 {
+			return fmt.Errorf("bridge config %s[%d] bridgeEvent.dataHeaderSize must be >= 0, got %d", filename, idx, ev.DataHeaderSize)
+		}
+		// Default to 8 (Anchor instruction discriminator). A program
+		// whose instruction data is a bare Vec<u8> with no
+		// discriminator prefix cannot express headerSize=0 here — the
+		// zero-means-default pattern shadows it. No such program exists
+		// among Anchor-based bridges; revisit if one shows up.
+		if ev.DataHeaderSize == 0 {
+			ev.DataHeaderSize = 8
+		}
 	}
-	// Destination legs must declare the instruction discriminator so
-	// Resolve can reject wrong-shape data.
-	if ev.Type == string(LegTypeDestination) && ev.InstructionDiscriminator == "" {
-		return fmt.Errorf("bridge config %s[%d] missing bridgeEvent.instructionDiscriminator for instruction-mode destination leg", filename, idx)
-	}
-	// Source legs must declare the account discriminator. Resolve's
-	// dispatch pivots on AccountDiscriminator being non-zero, so a
-	// missing discriminator would silently route source data through
-	// the destination parser.
-	if ev.Type == string(LegTypeSource) && ev.AccountDiscriminator == "" {
-		return fmt.Errorf("bridge config %s[%d] missing bridgeEvent.accountDiscriminator for instruction-mode source leg", filename, idx)
-	}
-	// Default source accountDataHeaderSize based on messageVersion.
-	if ev.Type == string(LegTypeSource) && ev.AccountDataHeaderSize == 0 {
-		switch ev.MessageVersion {
-		case 0:
-			ev.AccountDataHeaderSize = 40 // disc(8) + rent_payer(32).
-		case 1:
-			ev.AccountDataHeaderSize = 48 // disc(8) + rent_payer(32) + created_at(8).
+
+	if ev.Type == string(LegTypeSource) {
+		// Source legs must declare the account discriminator. Resolve's
+		// dispatch pivots on AccountDiscriminator being non-zero, so a
+		// missing discriminator would silently route source data through
+		// the destination parser.
+		if ev.AccountDiscriminator == "" {
+			return fmt.Errorf("bridge config %s[%d] missing bridgeEvent.accountDiscriminator for instruction-mode source leg", filename, idx)
+		}
+		// Source legs need an explicit positive account header size.
+		// There is no universal default — layouts vary by program — and
+		// a negative value would crash extractVecPayload.
+		if ev.AccountDataHeaderSize <= 0 {
+			return fmt.Errorf("bridge config %s[%d] bridgeEvent.accountDataHeaderSize must be > 0 for instruction-mode source leg, got %d", filename, idx, ev.AccountDataHeaderSize)
 		}
 	}
 	return nil

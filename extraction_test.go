@@ -1,134 +1,77 @@
 package bridgesolana
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/hex"
 	"testing"
 )
 
-func TestParseMessageSentAccount_V1(t *testing.T) {
-	// V1 layout: disc(8) + rent_payer(32) + Vec<u8>(4-byte len + data).
-	// Total header before Vec data: 40 + 4 = 44 bytes.
-	disc := []byte{0x83, 0x64, 0x85, 0x38, 0xa6, 0xe1, 0x97, 0x3c}
-	rentPayer := make([]byte, 32)
+func TestExtractVecPayload(t *testing.T) {
+	// header(headerSize) + 4-byte LE Vec length + body bytes.
+	body := []byte{0x01, 0x02, 0x03, 0x04, 0x05}
+	const headerSize = 12
 
-	// CCTP message: at least 20 bytes (nonce at offset 12, 8 bytes BE).
-	cctpMessage := make([]byte, 20)
-	binary.BigEndian.PutUint64(cctpMessage[12:20], 670212)
-
+	data := make([]byte, headerSize, headerSize+4+len(body))
 	vecLen := make([]byte, 4)
-	binary.LittleEndian.PutUint32(vecLen, uint32(len(cctpMessage)))
-
-	data := make([]byte, 0, 44+len(cctpMessage))
-	data = append(data, disc...)
-	data = append(data, rentPayer...)
+	binary.LittleEndian.PutUint32(vecLen, uint32(len(body)))
 	data = append(data, vecLen...)
-	data = append(data, cctpMessage...)
+	data = append(data, body...)
 
-	msgBytes, err := parseMessageSentAccount(data, 0)
+	got, err := extractVecPayload(data, headerSize)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-
-	if len(msgBytes) != len(cctpMessage) {
-		t.Fatalf("expected message length %d, got %d", len(cctpMessage), len(msgBytes))
-	}
-
-	nonce, err := extractCorrelationFields(msgBytes, []correlationField{
-		{Offset: 12, Size: 8, Type: "uint64", Field: "nonce"},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error extracting nonce: %v", err)
-	}
-	if nonce != "670212" {
-		t.Fatalf("expected nonce '670212', got %q", nonce)
+	if !bytes.Equal(got, body) {
+		t.Fatalf("payload mismatch: got %x want %x", got, body)
 	}
 }
 
-func TestParseMessageSentAccount_V2(t *testing.T) {
-	// V2 layout: disc(8) + rent_payer(32) + created_at(8) + Vec<u8>(4-byte len + data).
-	// Total header before Vec data: 48 + 4 = 52 bytes.
-	disc := []byte{0x83, 0x64, 0x85, 0x38, 0xa6, 0xe1, 0x97, 0x3c}
-	rentPayer := make([]byte, 32)
-	createdAt := make([]byte, 8)
+func TestExtractVecPayload_TooShortForLengthPrefix(t *testing.T) {
+	if _, err := extractVecPayload(make([]byte, 5), 8); err == nil {
+		t.Fatal("expected error: data shorter than header + length prefix")
+	}
+}
 
-	cctpMessage := make([]byte, 44)
+func TestExtractVecPayload_LengthExceedsData(t *testing.T) {
+	// header(8) + len=999 but no body.
+	data := make([]byte, 12)
+	binary.LittleEndian.PutUint32(data[8:12], 999)
+	if _, err := extractVecPayload(data, 8); err == nil {
+		t.Fatal("expected error: declared vec length exceeds remaining bytes")
+	}
+}
 
-	vecLen := make([]byte, 4)
-	binary.LittleEndian.PutUint32(vecLen, uint32(len(cctpMessage)))
+func TestExtractVecPayload_ZeroHeader(t *testing.T) {
+	// No header — data starts with the Vec length prefix directly.
+	body := []byte{0xaa, 0xbb, 0xcc}
+	data := make([]byte, 4, 4+len(body))
+	binary.LittleEndian.PutUint32(data[:4], uint32(len(body)))
+	data = append(data, body...)
 
-	data := make([]byte, 0, 52+len(cctpMessage))
-	data = append(data, disc...)
-	data = append(data, rentPayer...)
-	data = append(data, createdAt...)
-	data = append(data, vecLen...)
-	data = append(data, cctpMessage...)
-
-	msgBytes, err := parseMessageSentAccount(data, 1)
+	got, err := extractVecPayload(data, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-
-	if len(msgBytes) != len(cctpMessage) {
-		t.Fatalf("expected message length %d, got %d", len(cctpMessage), len(msgBytes))
+	if !bytes.Equal(got, body) {
+		t.Fatalf("payload mismatch: got %x want %x", got, body)
 	}
 }
 
-func TestParseMessageSentAccount_TooShort(t *testing.T) {
-	data := make([]byte, 10)
-	_, err := parseMessageSentAccount(data, 0)
-	if err == nil {
-		t.Fatal("expected error for short data")
-	}
-}
+func TestExtractVecPayload_EmptyVec(t *testing.T) {
+	// Header + zero-length Vec — should return an empty, non-nil slice.
+	data := make([]byte, 12)
+	// data[8:12] is already zero — vec length 0.
 
-func TestParseMessageSentAccount_InvalidVersion(t *testing.T) {
-	data := make([]byte, 100)
-	_, err := parseMessageSentAccount(data, 99)
-	if err == nil {
-		t.Fatal("expected error for invalid version")
-	}
-}
-
-func TestParseReceiveMessageInstructionData(t *testing.T) {
-	// Layout: anchor disc(8) + Vec<u8>(4-byte LE len + data).
-	anchorDisc := make([]byte, 8)
-	cctpMessage := make([]byte, 20)
-	binary.BigEndian.PutUint64(cctpMessage[12:20], 12345)
-
-	vecLen := make([]byte, 4)
-	binary.LittleEndian.PutUint32(vecLen, uint32(len(cctpMessage)))
-
-	data := make([]byte, 0, 12+len(cctpMessage))
-	data = append(data, anchorDisc...)
-	data = append(data, vecLen...)
-	data = append(data, cctpMessage...)
-
-	msgBytes, err := parseReceiveMessageInstructionData(data)
+	got, err := extractVecPayload(data, 8)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-
-	if len(msgBytes) != len(cctpMessage) {
-		t.Fatalf("expected message length %d, got %d", len(cctpMessage), len(msgBytes))
+	if got == nil {
+		t.Fatal("expected non-nil slice, got nil")
 	}
-
-	nonce, err := extractCorrelationFields(msgBytes, []correlationField{
-		{Offset: 12, Size: 8, Type: "uint64", Field: "nonce"},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error extracting nonce: %v", err)
-	}
-	if nonce != "12345" {
-		t.Fatalf("expected nonce '12345', got %q", nonce)
-	}
-}
-
-func TestParseReceiveMessageInstructionData_TooShort(t *testing.T) {
-	data := make([]byte, 5)
-	_, err := parseReceiveMessageInstructionData(data)
-	if err == nil {
-		t.Fatal("expected error for short data")
+	if len(got) != 0 {
+		t.Fatalf("expected empty slice, got %d bytes", len(got))
 	}
 }
 
@@ -223,7 +166,7 @@ func TestResolution_Resolve_SourceMatch(t *testing.T) {
 	r := &Resolution{
 		MessageProgramID:     "anyProg",
 		AccountDiscriminator: disc,
-		messageVersion:       0,
+		accountHeaderSize:    40,
 		correlation: []correlationField{
 			{Offset: 12, Size: 8, Type: "uint64", Field: "nonce"},
 		},
@@ -244,7 +187,7 @@ func TestResolution_Resolve_SourceMatch(t *testing.T) {
 func TestResolution_Resolve_SourceDiscriminatorMismatch(t *testing.T) {
 	r := &Resolution{
 		AccountDiscriminator: [8]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08},
-		messageVersion:       0,
+		accountHeaderSize:    40,
 		correlation: []correlationField{
 			{Offset: 12, Size: 8, Type: "uint64", Field: "nonce"},
 		},
@@ -291,7 +234,7 @@ func TestResolution_Resolve_SourceMatch_V2(t *testing.T) {
 	r := &Resolution{
 		MessageProgramID:     "anyProg",
 		AccountDiscriminator: disc,
-		messageVersion:       1,
+		accountHeaderSize:    48,
 		correlation: []correlationField{
 			{Offset: 0, Type: "keccak256", Field: "message_hash"},
 		},
@@ -312,7 +255,7 @@ func TestResolution_Resolve_SourceMatch_V2(t *testing.T) {
 func TestResolution_Resolve_SourceShortData(t *testing.T) {
 	r := &Resolution{
 		AccountDiscriminator: [8]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08},
-		messageVersion:       0,
+		accountHeaderSize:    40,
 	}
 
 	if _, _, err := r.Resolve([]byte{0x01, 0x02}); err != nil {
@@ -329,7 +272,7 @@ func TestResolution_Resolve_SourceMatchPayloadShort(t *testing.T) {
 
 	r := &Resolution{
 		AccountDiscriminator: disc,
-		messageVersion:       0,
+		accountHeaderSize:    40,
 		correlation: []correlationField{
 			{Offset: 12, Size: 8, Type: "uint64", Field: "nonce"},
 		},
@@ -362,6 +305,7 @@ func TestResolution_Resolve_Destination(t *testing.T) {
 	r := &Resolution{
 		MessageProgramID:         "anyProg",
 		instructionDiscriminator: instrDisc,
+		instructionHeaderSize:    8,
 		correlation: []correlationField{
 			{Offset: 12, Size: 8, Type: "uint64", Field: "nonce"},
 		},
@@ -385,6 +329,7 @@ func TestResolution_Resolve_DestinationDiscriminatorMismatch(t *testing.T) {
 	// Resolve must not silently produce a bogus correlation ID.
 	r := &Resolution{
 		instructionDiscriminator: [8]byte{0x26, 0x90, 0x7f, 0xe1, 0x1f, 0xe1, 0xee, 0x19},
+		instructionHeaderSize:    8,
 		correlation: []correlationField{
 			{Offset: 12, Size: 8, Type: "uint64", Field: "nonce"},
 		},
@@ -414,6 +359,7 @@ func TestResolution_Resolve_DestinationDiscriminatorMismatch(t *testing.T) {
 func TestResolution_Resolve_DestinationShortData(t *testing.T) {
 	r := &Resolution{
 		instructionDiscriminator: [8]byte{0x26, 0x90, 0x7f, 0xe1, 0x1f, 0xe1, 0xee, 0x19},
+		instructionHeaderSize:    8,
 		correlation: []correlationField{
 			{Offset: 12, Size: 8, Type: "uint64", Field: "nonce"},
 		},
@@ -436,6 +382,7 @@ func TestResolution_Resolve_DestinationDiscriminatorMatchPayloadShort(t *testing
 
 	r := &Resolution{
 		instructionDiscriminator: instrDisc,
+		instructionHeaderSize:    8,
 		correlation: []correlationField{
 			{Offset: 12, Size: 8, Type: "uint64", Field: "nonce"},
 		},
@@ -465,6 +412,7 @@ func TestResolution_Resolve_KeccakRoundTrip(t *testing.T) {
 
 	r := &Resolution{
 		instructionDiscriminator: instrDisc,
+		instructionHeaderSize:    8,
 		correlation: []correlationField{
 			{Offset: 0, Type: "keccak256", Field: "message_hash"},
 		},

@@ -10,7 +10,6 @@
       "name": "SendMessage",
       "detectionMode": "instruction",
       "messageProgramId": "CCTPmbSD7gX1bxKPAmg77w8oFzNFpaQiQUWD43TKaecd",
-      "messageVersion": 0,
       "accountDiscriminator": "83648538a6e1973c",
       "accountDataHeaderSize": 40,
       "correlation": [
@@ -57,7 +56,6 @@
       "name": "SendMessage",
       "detectionMode": "instruction",
       "messageProgramId": "CCTPV2Sm4AdWt5296sk4P66VBZ7bEhcARwFaaS9YPbeC",
-      "messageVersion": 1,
       "accountDiscriminator": "83648538a6e1973c",
       "accountDataHeaderSize": 48,
       "correlation": [

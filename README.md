@@ -49,12 +49,17 @@ for _, det := range d.Detect(logs) {
         data = fetchAccountData(det.Resolution.MessageProgramID, det.Resolution.AccountDiscriminator)
 
     case bridgesolana.LegTypeDestination:
-        // The bytes are the instruction data of the ReceiveMessage
-        // call to det.Resolution.MessageProgramID in this transaction.
-        data = fetchReceiveMessageInstructionData(det.Resolution.MessageProgramID)
+        // The bytes are the instruction data of the bridge's
+        // destination call (e.g. CCTP's ReceiveMessage) executed
+        // by det.Resolution.MessageProgramID in this transaction.
+        data = fetchInstructionData(det.Resolution.MessageProgramID)
     }
 
     correlationID, matched, err := det.Resolution.Resolve(data)
+    // Always check err before matched. matched=false with err!=nil
+    // means the discriminator matched but the body parse failed —
+    // logging it surfaces malformed on-chain data; checking only
+    // matched would silently drop the error.
     if err != nil {
         log.Printf("resolve %s: %v", det.BridgeName, err)
         continue
@@ -63,7 +68,7 @@ for _, det := range d.Detect(logs) {
         // Source leg: the candidate account didn't match the
         // expected discriminator — try the next one.
         // Destination leg: the bytes you passed don't look like the
-        // expected ReceiveMessage instruction data.
+        // expected destination instruction data.
         continue
     }
     fmt.Printf("%s %s leg, correlation %s\n",
@@ -125,7 +130,7 @@ Bridge configurations are embedded JSON, one file per protocol (currently `confi
 
 `Detect` is a streaming scan of the log lines that tracks the program invocation stack, so instruction names are only matched within their owning program's context.
 
-For instruction-mode source legs, the correlation ID lives in the on-chain `MessageSent` account whose layout depends on the message version (V1 vs V2). For destination legs, it lives in the `ReceiveMessage` instruction data. The `Resolution` returned with each detection carries everything the caller needs to fetch the bytes; `Resolution.Resolve` then handles parsing and correlation-ID extraction in one step.
+For instruction-mode source legs, the correlation ID lives in an on-chain account created by the source instruction (CCTP, for example, calls this the `MessageSent` account, with V1 and V2 layouts of different sizes). For destination legs, it lives in the destination instruction's data (CCTP's `ReceiveMessage`). The per-bridge config supplies the discriminators and header sizes; `Resolution.Resolve` verifies them, decodes the trailing `Vec<u8>` body, and runs the configured correlation extraction in one step.
 
 ## License
 
