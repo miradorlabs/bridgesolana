@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Pre-push hook: runs the full verify suite before every push.
+# Install via `make setup-hooks`. CI runs the same checks.
+
+set -euo pipefail
+
+echo "==> Running pre-push verify"
+make verify

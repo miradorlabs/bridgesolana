@@ -1,0 +1,8 @@
+# Default owners for everything in the repo.
+# Owners are automatically requested for review when a PR modifies
+# files matching the patterns below.
+
+*       @miradorlabs/engineering
+
+# Bridge configs are protocol-specific and want extra scrutiny.
+/config/        @miradorlabs/engineering

@@ -1,0 +1,96 @@
+[
+  {
+    "chainName": "solana",
+    "bridgeName": "cctp",
+    "bridgeDescription": "Circle CCTP V1 - DepositForBurn (Source)",
+    "bridgeProgram": {
+      "programId": "CCTPiPYPc6AsJuwueEnWgSgucamXDZwBd53dQ11YiKX3"
+    },
+    "bridgeEvent": {
+      "type": "source",
+      "name": "SendMessage",
+      "detectionMode": "instruction",
+      "messageProgramId": "CCTPmbSD7gX1bxKPAmg77w8oFzNFpaQiQUWD43TKaecd",
+      "messageVersion": 0,
+      "accountDiscriminator": "83648538a6e1973c",
+      "accountDataHeaderSize": 40,
+      "correlation": [
+        {
+          "offset": 12,
+          "size": 8,
+          "type": "uint64",
+          "field": "nonce"
+        }
+      ]
+    }
+  },
+  {
+    "chainName": "solana",
+    "bridgeName": "cctp",
+    "bridgeDescription": "Circle CCTP V1 - ReceiveMessage (Destination)",
+    "bridgeProgram": {
+      "programId": "CCTPmbSD7gX1bxKPAmg77w8oFzNFpaQiQUWD43TKaecd"
+    },
+    "bridgeEvent": {
+      "type": "destination",
+      "name": "ReceiveMessage",
+      "detectionMode": "instruction",
+      "messageProgramId": "CCTPmbSD7gX1bxKPAmg77w8oFzNFpaQiQUWD43TKaecd",
+      "dataHeaderSize": 8,
+      "correlation": [
+        {
+          "offset": 12,
+          "size": 8,
+          "type": "uint64",
+          "field": "nonce"
+        }
+      ]
+    }
+  },
+  {
+    "chainName": "solana",
+    "bridgeName": "cctp-v2",
+    "bridgeDescription": "Circle CCTP V2 - DepositForBurn (Source)",
+    "bridgeProgram": {
+      "programId": "CCTPV2vPZJS2u2BBsUoscuikbYjnpFmbFsvVuJdgUMQe"
+    },
+    "bridgeEvent": {
+      "type": "source",
+      "name": "SendMessage",
+      "detectionMode": "instruction",
+      "messageProgramId": "CCTPV2Sm4AdWt5296sk4P66VBZ7bEhcARwFaaS9YPbeC",
+      "messageVersion": 1,
+      "accountDiscriminator": "83648538a6e1973c",
+      "accountDataHeaderSize": 48,
+      "correlation": [
+        {
+          "offset": 0,
+          "type": "keccak256",
+          "field": "message_hash"
+        }
+      ]
+    }
+  },
+  {
+    "chainName": "solana",
+    "bridgeName": "cctp-v2",
+    "bridgeDescription": "Circle CCTP V2 - ReceiveMessage (Destination)",
+    "bridgeProgram": {
+      "programId": "CCTPV2Sm4AdWt5296sk4P66VBZ7bEhcARwFaaS9YPbeC"
+    },
+    "bridgeEvent": {
+      "type": "destination",
+      "name": "ReceiveMessage",
+      "detectionMode": "instruction",
+      "messageProgramId": "CCTPV2Sm4AdWt5296sk4P66VBZ7bEhcARwFaaS9YPbeC",
+      "dataHeaderSize": 8,
+      "correlation": [
+        {
+          "offset": 0,
+          "type": "keccak256",
+          "field": "message_hash"
+        }
+      ]
+    }
+  }
+]

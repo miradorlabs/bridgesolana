@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# commit-msg hook: enforces Conventional Commits and DCO sign-off.
+# Skips merge commits, fixup/squash commits, and revert commits.
+
+set -euo pipefail
+
+msg_file="${1}"
+first_line="$(head -n1 "${msg_file}")"
+
+# Skip auto-generated messages.
+if [[ "${first_line}" =~ ^(Merge|Revert|fixup!|squash!|amend!) ]]; then
+  exit 0
+fi
+
+# Conventional Commits header:
+#   <type>(<scope>)?!?: <description>
+header_re='^(feat|fix|refactor|perf|test|docs|build|ci|chore|revert)(\([a-z0-9_-]+\))?!?: .{1,100}$'
+if ! [[ "${first_line}" =~ ${header_re} ]]; then
+  cat >&2 <<EOF
+ERROR: commit message does not follow Conventional Commits.
+
+  Got:    ${first_line}
+  Expect: <type>(<scope>): <short description>
+
+Allowed types: feat, fix, refactor, perf, test, docs, build, ci, chore, revert
+Suggested scopes: config, detector, extraction, testdata, deps
+
+Examples:
+  feat(config): add CCTP V2 destination on Solana
+  fix(extraction): handle short MessageSent account data
+  chore(deps): bump go-ethereum to v1.18.0
+
+See CONTRIBUTING.md for the full specification.
+EOF
+  exit 1
+fi
+
+# DCO sign-off check.
+if ! grep -qE '^Signed-off-by: .+ <.+@.+>$' "${msg_file}"; then
+  cat >&2 <<EOF
+ERROR: commit is missing a Signed-off-by trailer.
+
+Re-run with sign-off:   git commit -s --amend --no-edit
+
+See https://developercertificate.org for the DCO text.
+EOF
+  exit 1
+fi
