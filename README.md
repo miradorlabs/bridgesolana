@@ -60,8 +60,10 @@ for _, det := range d.Detect(logs) {
         continue
     }
     if !matched {
-        // Source leg only: the supplied account didn't match the
-        // discriminator. Try the next candidate.
+        // Source leg: the candidate account didn't match the
+        // expected discriminator — try the next one.
+        // Destination leg: the bytes you passed don't look like the
+        // expected ReceiveMessage instruction data.
         continue
     }
     fmt.Printf("%s %s leg, correlation %s\n",
@@ -69,7 +71,7 @@ for _, det := range d.Detect(logs) {
 }
 ```
 
-The `matched` return value is meaningful only for source legs: it lets you scan a transaction's writable accounts and stop on the first one whose Anchor discriminator matches `Resolution.AccountDiscriminator`. For destination legs `matched` is always `true` on success.
+Both legs gate parsing on the leading 8-byte Anchor discriminator. Source legs use `matched=false` as a scan-and-skip signal so callers can iterate candidate accounts cheaply. Destination legs use it as a wrong-data-type guard — there is no candidate iteration to do, so `matched=false` on a destination resolve indicates the caller fed the wrong bytes (e.g. account data instead of instruction data) and should be logged.
 
 ## Coverage
 

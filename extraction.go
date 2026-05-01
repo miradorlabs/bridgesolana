@@ -18,21 +18,33 @@ const correlationDelimiter = ":"
 
 // Resolve extracts the correlation ID from raw on-chain data.
 //
+// Both legs gate parsing on the leading 8-byte Anchor discriminator and
+// return ("", false, nil) when it does not match — for source legs that
+// is the scan-and-skip signal callers use to walk a transaction's
+// candidate accounts; for destination legs it indicates the bytes did
+// not come from the expected ReceiveMessage instruction. Treat
+// matched=false as a data-shape failure on destination dispatch.
+//
 // For source legs (AccountDiscriminator non-zero), pass the full
 // MessageSent account data including the leading 8-byte Anchor
-// discriminator. Resolve verifies the discriminator and returns
-// ("", false, nil) on mismatch so callers can scan candidate accounts
-// cheaply. On match it parses the MessageSent layout (selected by
-// MessageVersion) and returns (id, true, nil).
+// discriminator. Resolve verifies the discriminator, parses the
+// MessageSent layout (selected by messageVersion), and returns
+// (id, true, nil) on success.
 //
 // For destination legs (AccountDiscriminator zero), pass the
 // ReceiveMessage instruction data including its 8-byte Anchor
-// discriminator. Resolve always reports matched=true on success.
+// instruction discriminator. Resolve verifies the discriminator,
+// extracts the message bytes, and returns (id, true, nil) on success.
 //
-// Data-shape errors (truncated bytes, unsupported version, malformed
-// fields) return ("", false, err).
+// Data-shape errors past the discriminator gate (truncated payload,
+// unsupported version, malformed fields) return ("", false, err).
 func (r *Resolution) Resolve(data []byte) (id string, matched bool, err error) {
 	if r.AccountDiscriminator == ([8]byte{}) {
+		if r.instructionDiscriminator != ([8]byte{}) {
+			if len(data) < 8 || !bytes.Equal(data[:8], r.instructionDiscriminator[:]) {
+				return "", false, nil
+			}
+		}
 		msgBytes, err := parseReceiveMessageInstructionData(data)
 		if err != nil {
 			return "", false, err

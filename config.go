@@ -42,12 +42,13 @@ type bridgeEvent struct {
 	Correlation []correlationField `json:"correlation"` // Fields to extract for the correlation ID.
 
 	// Instruction-mode fields.
-	DetectionMode         string `json:"detectionMode,omitempty"`         // "log" (default) or "instruction".
-	MessageVersion        int    `json:"messageVersion,omitempty"`        // 0 = v1 (uint64 nonce), 1 = v2 (bytes32 nonce).
-	AccountDiscriminator  string `json:"accountDiscriminator,omitempty"`  // Hex string of 8-byte discriminator for finding the source account.
-	MessageProgramID      string `json:"messageProgramId,omitempty"`      // Program holding the MessageSent account or instruction data.
-	DataHeaderSize        int    `json:"dataHeaderSize,omitempty"`        // Destination: bytes before Vec in instruction data.
-	AccountDataHeaderSize int    `json:"accountDataHeaderSize,omitempty"` // Source: bytes before Vec in account data.
+	DetectionMode            string `json:"detectionMode,omitempty"`            // "log" (default) or "instruction".
+	MessageVersion           int    `json:"messageVersion,omitempty"`           // 0 = v1 (uint64 nonce), 1 = v2 (bytes32 nonce).
+	AccountDiscriminator     string `json:"accountDiscriminator,omitempty"`     // Hex 8-byte discriminator gating the source MessageSent account.
+	InstructionDiscriminator string `json:"instructionDiscriminator,omitempty"` // Hex 8-byte Anchor discriminator gating destination ReceiveMessage instruction data.
+	MessageProgramID         string `json:"messageProgramId,omitempty"`         // Program holding the MessageSent account or instruction data.
+	DataHeaderSize           int    `json:"dataHeaderSize,omitempty"`           // Destination: bytes before Vec in instruction data.
+	AccountDataHeaderSize    int    `json:"accountDataHeaderSize,omitempty"`    // Source: bytes before Vec in account data.
 }
 
 // allConfigs returns all embedded Solana bridge definitions.
@@ -168,8 +169,13 @@ func validateInstructionMode(filename string, idx int, ev *bridgeEvent) error {
 		return fmt.Errorf("bridge config %s[%d] missing bridgeEvent.messageProgramId for instruction mode", filename, idx)
 	}
 	// Default destination dataHeaderSize: 8 bytes (anchor discriminator).
-	if ev.Type == "destination" && ev.DataHeaderSize == 0 {
+	if ev.Type == string(LegTypeDestination) && ev.DataHeaderSize == 0 {
 		ev.DataHeaderSize = 8
+	}
+	// Destination legs must declare the instruction discriminator so
+	// Resolve can reject wrong-shape data.
+	if ev.Type == string(LegTypeDestination) && ev.InstructionDiscriminator == "" {
+		return fmt.Errorf("bridge config %s[%d] missing bridgeEvent.instructionDiscriminator for instruction-mode destination leg", filename, idx)
 	}
 	// Default source accountDataHeaderSize based on messageVersion.
 	if ev.Type == "source" && ev.AccountDataHeaderSize == 0 {

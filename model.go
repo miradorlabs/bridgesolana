@@ -40,8 +40,9 @@ type Resolution struct {
 	// which dispatches Resolve to the instruction-data parser.
 	AccountDiscriminator [8]byte
 
-	messageVersion int
-	correlation    []correlationField
+	messageVersion           int
+	instructionDiscriminator [8]byte
+	correlation              []correlationField
 }
 
 // correlationField describes a single field to extract from decoded

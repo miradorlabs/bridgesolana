@@ -42,9 +42,12 @@ The detector handles two log shapes that occur in Solana transactions:
   correlation ID lives off-log: callers must read the relevant `MessageSent`
   account (source) or `ReceiveMessage` instruction data (destination) via
   RPC, then call `Resolution.Resolve(data)` which returns
-  `(id, matched, err)`. For source legs `matched=false` signals an
-  account whose Anchor discriminator does not match the resolution —
-  callers can iterate candidate accounts cheaply.
+  `(id, matched, err)`. Both legs gate parsing on the leading 8-byte
+  Anchor discriminator. For source legs `matched=false` signals an
+  account whose discriminator does not match the resolution — callers
+  iterate candidate accounts. For destination legs `matched=false`
+  signals wrong-shape input (e.g. caller fed account data instead of
+  ReceiveMessage instruction data) and should be logged.
 
 If you add a new bridge that uses Anchor `emit!`, prefer log mode. If it
 fires bridge intent through CPI without emitting an event, instruction

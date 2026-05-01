@@ -67,9 +67,13 @@ func TestDetect_CCTPv1Destination(t *testing.T) {
 	if det.Resolution == nil {
 		t.Fatal("Resolution must be non-nil")
 	}
-	// Destination legs leave AccountDiscriminator as zero.
+	// Destination legs leave AccountDiscriminator as zero and carry
+	// the ReceiveMessage instruction discriminator instead.
 	if det.Resolution.AccountDiscriminator != ([8]byte{}) {
 		t.Fatalf("AccountDiscriminator should be zero for destination legs, got %x", det.Resolution.AccountDiscriminator)
+	}
+	if det.Resolution.instructionDiscriminator == ([8]byte{}) {
+		t.Fatal("instructionDiscriminator must be set for destination legs (footgun guard)")
 	}
 }
 
