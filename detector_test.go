@@ -1,6 +1,8 @@
 package bridgesolana
 
 import (
+	"encoding/base64"
+	"encoding/binary"
 	"reflect"
 	"sort"
 	"testing"
@@ -141,6 +143,90 @@ func TestProgramIDs_ReturnsCopy(t *testing.T) {
 	second := d.ProgramIDs()
 	if second[0] == "tampered" {
 		t.Fatal("ProgramIDs must return a fresh slice; mutation leaked into detector state")
+	}
+}
+
+func TestDetect_LogMode(t *testing.T) {
+	const targetProg = "FakeLogProg11111111111111111111111111111111"
+	disc := computeAnchorDiscriminator("event", "MessageSent")
+
+	d := &BridgeDetector{
+		logSubs: map[[8]byte]*logSubscription{
+			disc: {
+				programID:   targetProg,
+				bridgeName:  "test-bridge",
+				bridgeDesc:  "test bridge",
+				legType:     LegTypeSource,
+				correlation: []CorrelationField{{Offset: 8, Size: 8, Type: "uint64", Field: "nonce"}},
+			},
+		},
+		instrSubs: map[instructionKey]*instrSubscription{},
+	}
+
+	// Build a "Program data:" line: discriminator(8) + nonce(8 BE).
+	payload := make([]byte, 16)
+	copy(payload[:8], disc[:])
+	binary.BigEndian.PutUint64(payload[8:], 12345)
+	b64 := base64.StdEncoding.EncodeToString(payload)
+
+	logs := []string{
+		"Program " + targetProg + " invoke [1]",
+		"Program data: " + b64,
+		"Program " + targetProg + " success",
+	}
+
+	got := d.Detect(logs)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 detection, got %d", len(got))
+	}
+	if got[0].CorrelationID != "12345" {
+		t.Fatalf("CorrelationID = %q, want %q", got[0].CorrelationID, "12345")
+	}
+	if got[0].Resolution != nil {
+		t.Fatal("log-mode detection must have nil Resolution")
+	}
+	if got[0].BridgeLegType != LegTypeSource {
+		t.Fatalf("BridgeLegType = %q, want %q", got[0].BridgeLegType, LegTypeSource)
+	}
+}
+
+func TestDetect_LogModeProgramScoped(t *testing.T) {
+	// A "Program data:" with a known discriminator emitted by the wrong
+	// program must not match. Solana guarantees this in practice (only
+	// the executing program emits "Program data:"), but defending it
+	// here keeps the detector honest if anything in the log stream is
+	// adversarial.
+	const targetProg = "FakeLogProg11111111111111111111111111111111"
+	const otherProg = "OtherProg111111111111111111111111111111111"
+
+	disc := computeAnchorDiscriminator("event", "MessageSent")
+
+	d := &BridgeDetector{
+		logSubs: map[[8]byte]*logSubscription{
+			disc: {
+				programID:   targetProg,
+				bridgeName:  "test-bridge",
+				bridgeDesc:  "test bridge",
+				legType:     LegTypeSource,
+				correlation: []CorrelationField{{Offset: 8, Size: 8, Type: "uint64", Field: "nonce"}},
+			},
+		},
+		instrSubs: map[instructionKey]*instrSubscription{},
+	}
+
+	payload := make([]byte, 16)
+	copy(payload[:8], disc[:])
+	binary.BigEndian.PutUint64(payload[8:], 99)
+	b64 := base64.StdEncoding.EncodeToString(payload)
+
+	logs := []string{
+		"Program " + otherProg + " invoke [1]",
+		"Program data: " + b64,
+		"Program " + otherProg + " success",
+	}
+
+	if got := d.Detect(logs); len(got) != 0 {
+		t.Fatalf("expected 0 detections (wrong emitting program), got %d", len(got))
 	}
 }
 

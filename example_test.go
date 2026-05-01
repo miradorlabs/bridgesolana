@@ -9,11 +9,9 @@ import (
 // ExampleNewBridgeDetector shows how to construct a detector. It is cheap
 // and safe to call once at process start.
 func ExampleNewBridgeDetector() {
-	d, err := bridgesolana.NewBridgeDetector()
-	if err != nil {
-		panic(err)
-	}
-	_ = d
+	_, err := bridgesolana.NewBridgeDetector()
+	fmt.Println(err)
+	// Output: <nil>
 }
 
 // ExampleBridgeDetector_Detect shows the common path: pass the raw program

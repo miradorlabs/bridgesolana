@@ -9,13 +9,15 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
-// CorrelationDelimiter separates multiple correlation fields in the
-// resulting correlation ID string.
-const CorrelationDelimiter = ":"
+// correlationDelimiter joins multiple correlation field values into the
+// final correlation ID string. Treat the resulting string as opaque —
+// the format is not part of the public contract.
+const correlationDelimiter = ":"
 
 // ExtractCorrelationFields extracts correlation field values from decoded
-// event data and joins them with CorrelationDelimiter. The data parameter
-// is the full decoded event bytes (including any 8-byte discriminator).
+// event data and joins them into a single opaque correlation ID. The
+// data parameter is the full decoded event bytes (including any 8-byte
+// discriminator).
 func ExtractCorrelationFields(data []byte, fields []CorrelationField) (string, error) {
 	if len(fields) == 0 {
 		return "", fmt.Errorf("no correlation fields configured")
@@ -30,11 +32,13 @@ func ExtractCorrelationFields(data []byte, fields []CorrelationField) (string, e
 		parts = append(parts, value)
 	}
 
-	return strings.Join(parts, CorrelationDelimiter), nil
+	return strings.Join(parts, correlationDelimiter), nil
 }
 
 // ParseMessageSentAccount extracts CCTP message bytes from a MessageSent
-// account's raw data.
+// account's raw data. Pass the version returned in
+// Resolution.MessageVersion; only 0 (CCTP V1) and 1 (CCTP V2) are valid
+// and any other value returns an error.
 //
 // Account layout:
 //   - V1 (version=0): discriminator(8) + rent_payer(32) + Vec<u8> at offset 40.
@@ -58,6 +62,10 @@ func ParseMessageSentAccount(data []byte, version int) ([]byte, error) {
 // ParseReceiveMessageInstructionData extracts CCTP message bytes from
 // ReceiveMessage instruction data. Layout: Anchor discriminator(8) +
 // Vec<u8> (4-byte LE length + data).
+//
+// The 8-byte header skip is specific to CCTP's ReceiveMessage layout.
+// Bridges with a different destination instruction layout will need a
+// different parse helper.
 func ParseReceiveMessageInstructionData(data []byte) ([]byte, error) {
 	return extractPayload(data, 8)
 }

@@ -57,7 +57,8 @@ func (d *BridgeDetector) ProgramIDs() []string {
 // Detect scans logs (the raw "Program ..." strings from a single Solana
 // transaction's metadata) and returns one Detection per matched bridge
 // event. The detector tracks the program invocation stack across log
-// lines, so nested CPI calls are scoped to the right program.
+// lines, so both "Program data:" events and "Program log: Instruction:"
+// lines are scoped to the program currently executing.
 //
 // A Detection with a non-empty CorrelationID is fully resolved. A
 // Detection with a non-nil Resolution requires the caller to fetch the
@@ -87,39 +88,32 @@ func (d *BridgeDetector) Detect(logs []string) []Detection {
 	for _, line := range logs {
 		trimmed := strings.TrimSpace(line)
 
+		// invoke / exit / inside-program are mutually exclusive — keep
+		// these as `else if` so the ordering dependency is explicit.
 		if strings.HasPrefix(trimmed, invokePrefix) && strings.Contains(trimmed, invokeMarker) {
 			stack = append(stack, extractProgramID(trimmed))
-			continue
-		}
-		if strings.HasPrefix(trimmed, invokePrefix) && (strings.HasSuffix(trimmed, successSuffix) || strings.Contains(trimmed, failedSubstring)) {
+		} else if strings.HasPrefix(trimmed, invokePrefix) && (strings.HasSuffix(trimmed, successSuffix) || strings.Contains(trimmed, failedSubstring)) {
 			if len(stack) > 0 {
 				stack = stack[:len(stack)-1]
 			}
-			continue
-		}
-		if len(stack) == 0 {
-			continue
-		}
+		} else if len(stack) > 0 {
+			current := stack[len(stack)-1]
 
-		current := stack[len(stack)-1]
-
-		if hasInstr && strings.HasPrefix(trimmed, instrLogPrefix) {
-			name := strings.TrimPrefix(trimmed, instrLogPrefix)
-			if sub, ok := d.instrSubs[instructionKey{programID: current, instructionName: name}]; ok {
-				res := sub.resolution
-				out = append(out, Detection{
-					BridgeName:        sub.bridgeName,
-					BridgeDescription: sub.bridgeDesc,
-					BridgeLegType:     sub.legType,
-					Resolution:        &res,
-				})
-			}
-			continue
-		}
-
-		if hasLog && strings.HasPrefix(trimmed, dataPrefix) {
-			if det, ok := d.matchLogData(strings.TrimPrefix(trimmed, dataPrefix)); ok {
-				out = append(out, det)
+			if hasInstr && strings.HasPrefix(trimmed, instrLogPrefix) {
+				name := strings.TrimPrefix(trimmed, instrLogPrefix)
+				if sub, ok := d.instrSubs[instructionKey{programID: current, instructionName: name}]; ok {
+					res := sub.resolution
+					out = append(out, Detection{
+						BridgeName:        sub.bridgeName,
+						BridgeDescription: sub.bridgeDesc,
+						BridgeLegType:     sub.legType,
+						Resolution:        &res,
+					})
+				}
+			} else if hasLog && strings.HasPrefix(trimmed, dataPrefix) {
+				if det, ok := d.matchLogData(current, strings.TrimPrefix(trimmed, dataPrefix)); ok {
+					out = append(out, det)
+				}
 			}
 		}
 	}
@@ -175,6 +169,7 @@ func (d *BridgeDetector) addSubscription(cfg *bridgeConfig, progSet map[string]s
 	default: // log mode.
 		disc := computeAnchorDiscriminator(cfg.BridgeEvent.AnchorType, cfg.BridgeEvent.Name)
 		d.logSubs[disc] = &logSubscription{
+			programID:   cfg.BridgeProgram.ProgramID,
 			bridgeName:  cfg.BridgeName,
 			bridgeDesc:  cfg.BridgeDescription,
 			legType:     legType,
@@ -185,7 +180,7 @@ func (d *BridgeDetector) addSubscription(cfg *bridgeConfig, progSet map[string]s
 	return nil
 }
 
-func (d *BridgeDetector) matchLogData(b64 string) (Detection, bool) {
+func (d *BridgeDetector) matchLogData(currentProgram, b64 string) (Detection, bool) {
 	decoded, err := base64.StdEncoding.DecodeString(b64)
 	if err != nil || len(decoded) < 8 {
 		return Detection{}, false
@@ -193,7 +188,7 @@ func (d *BridgeDetector) matchLogData(b64 string) (Detection, bool) {
 	var disc [8]byte
 	copy(disc[:], decoded[:8])
 	sub, ok := d.logSubs[disc]
-	if !ok {
+	if !ok || sub.programID != currentProgram {
 		return Detection{}, false
 	}
 	correlationID, err := ExtractCorrelationFields(decoded, sub.correlation)
@@ -209,6 +204,7 @@ func (d *BridgeDetector) matchLogData(b64 string) (Detection, bool) {
 }
 
 type logSubscription struct {
+	programID   string
 	bridgeName  string
 	bridgeDesc  string
 	legType     LegType

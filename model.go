@@ -28,6 +28,18 @@ type Detection struct {
 
 // Resolution describes how to obtain the correlation ID for an
 // instruction-mode detection that did not carry it in-band.
+//
+// Dispatch on the parent Detection's BridgeLegType:
+//
+//   - Source (LegTypeSource): fetch the account at MessageProgramID whose
+//     data starts with AccountDiscriminator, then call
+//     ParseMessageSentAccount(data, MessageVersion).
+//   - Destination (LegTypeDestination): fetch the ReceiveMessage
+//     instruction data emitted by MessageProgramID, then call
+//     ParseReceiveMessageInstructionData(data).
+//
+// In both cases, feed the returned message bytes into
+// ExtractCorrelationFields(msgBytes, Correlation) to produce the ID.
 type Resolution struct {
 	// MessageProgramID is the program that holds the on-chain data
 	// containing the correlation ID — a MessageSent account for source
@@ -36,8 +48,7 @@ type Resolution struct {
 
 	// AccountDiscriminator is the 8-byte Anchor account discriminator
 	// used to identify the relevant account among the transaction's
-	// accounts. Set for source legs only; the zero value indicates a
-	// destination-leg resolution.
+	// accounts. Set for source legs only; unused for destination legs.
 	AccountDiscriminator [8]byte
 
 	// MessageVersion selects the account layout for source legs:
@@ -52,8 +63,18 @@ type Resolution struct {
 // CorrelationField describes a single field to extract from decoded
 // event or message data and contribute to the correlation ID string.
 type CorrelationField struct {
-	Offset int    `json:"offset"`
-	Size   int    `json:"size"`
-	Type   string `json:"type"`
-	Field  string `json:"field"`
+	// Offset is the byte offset into the decoded data where the field
+	// begins.
+	Offset int `json:"offset"`
+	// Size is the field's length in bytes. Required for fixed-size
+	// types (uintN, bytes32, pubkey); 0 is valid for "keccak256",
+	// which hashes from Offset to the end of the data.
+	Size int `json:"size"`
+	// Type names the extraction strategy: "uint64_le", "uint32_le",
+	// "uint64", "uint32", "bytes32", "pubkey", or "keccak256". Unknown
+	// values fall back to a generic big-endian integer of Size bytes.
+	Type string `json:"type"`
+	// Field is a human-readable label used only in error messages
+	// (e.g. "nonce"). It is not part of the resulting correlation ID.
+	Field string `json:"field"`
 }
