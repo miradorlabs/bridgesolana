@@ -38,9 +38,8 @@ the human-readable summary; the Go validation is the source of truth.
   "anchorType": "event",            // log mode only: "event" or "account"
 
   "messageProgramId": "...",        // instruction mode only
-  "messageVersion": 0,              // instruction mode + source only: 0 = V1, 1 = V2
   "accountDiscriminator": "hex8",   // instruction mode + source only
-  "accountDataHeaderSize": 40,      // instruction mode + source only; defaulted from messageVersion
+  "accountDataHeaderSize": 40,      // instruction mode + source only (required)
   "instructionDiscriminator": "hex8", // instruction mode + destination only (required)
   "dataHeaderSize": 8,              // instruction mode + destination only; defaults to 8
 
@@ -80,29 +79,32 @@ returns a `Resolution` describing how to fetch and parse the payload.
 
 #### Source legs (`type: "source"`)
 
-The correlation ID lives in a `MessageSent` PDA created by the
-instruction. The caller fetches the account by program ID and verifies
-its leading 8-byte discriminator, then `Resolution.Resolve` parses the
-account body.
+The correlation ID lives in an account created by the instruction
+(typically a PDA — for CCTP, the `MessageSent` account). The caller
+fetches the candidate accounts owned by `messageProgramId` and passes
+them to `Resolution.Resolve`, which verifies the leading 8-byte Anchor
+discriminator and parses a `Vec<u8>` body that begins after the first
+`accountDataHeaderSize` bytes of the account.
 
 | Field                   | Required | Notes |
 |-------------------------|----------|-------|
-| `messageProgramId`      | yes      | Program owning the `MessageSent` account. |
+| `messageProgramId`      | yes      | Program owning the source account. |
 | `accountDiscriminator`  | yes      | 8-byte hex (16 chars). Surfaced as `Resolution.AccountDiscriminator` so callers can scan a transaction's writable accounts. `Resolve` rejects non-matching accounts with `matched=false`. |
-| `messageVersion`        | yes      | `0` for CCTP V1 layout (`disc(8)+rentPayer(32)+Vec`), `1` for CCTP V2 layout (`disc(8)+rentPayer(32)+createdAt(8)+Vec`). New layouts require Go-side support in `parseMessageSentAccount`. |
-| `accountDataHeaderSize` | no       | Bytes before the `Vec<u8>` length prefix. Defaults to 40 (V1) or 48 (V2) based on `messageVersion`. Override only when adding a non-CCTP source layout. |
+| `accountDataHeaderSize` | yes      | Total bytes before the `Vec<u8>` length prefix, **including** the 8-byte Anchor discriminator. Examples: CCTP V1 = 40 (`disc(8)+rentPayer(32)`), CCTP V2 = 48 (`disc(8)+rentPayer(32)+createdAt(8)`). Layouts vary by program; there is no universal default. |
 
 #### Destination legs (`type: "destination"`)
 
 The correlation ID lives in the raw instruction data of the destination
-call (e.g. `ReceiveMessage`). The caller passes that instruction's data
-to `Resolution.Resolve`.
+call (e.g. CCTP's `ReceiveMessage`). The caller passes that
+instruction's data to `Resolution.Resolve`, which verifies the leading
+8-byte Anchor instruction discriminator and parses a `Vec<u8>` body
+that begins after the first `dataHeaderSize` bytes.
 
 | Field                      | Required | Notes |
 |----------------------------|----------|-------|
 | `messageProgramId`         | yes      | Program executing the destination instruction. |
 | `instructionDiscriminator` | yes      | 8-byte hex (16 chars) of the Anchor instruction discriminator (`sha256("global:<snake_case_name>")[:8]`). Verified by `Resolve`; mismatched bytes return `matched=false` to guard against the caller passing the wrong data. |
-| `dataHeaderSize`           | no       | Bytes before the `Vec<u8>` length prefix. Defaults to 8 (Anchor's standard instruction discriminator). |
+| `dataHeaderSize`           | no       | Total bytes before the `Vec<u8>` length prefix, **including** the 8-byte Anchor instruction discriminator. Defaults to 8 — matching Anchor's convention where the discriminator is the entire header. Override when the program wraps the discriminator with extra fixed-size fields. |
 
 ## `correlation`
 
@@ -130,11 +132,11 @@ resulting string as opaque — it is only meaningful as an equality key.
 
 | Type        | Output                                 | Notes |
 |-------------|----------------------------------------|-------|
-| `uint64`    | decimal string                         | Big-endian; size must be 8. Matches EVM's CCTP nonce format. |
+| `uint64`    | decimal string                         | Big-endian; size must be 8. (CCTP V1 uses this for its nonce, matching EVM format.) |
 | `uint32`    | decimal string                         | Big-endian; size must be 4. |
 | `uint64_le` | decimal string                         | Little-endian; size must be 8. |
 | `uint32_le` | decimal string                         | Little-endian; size must be 4. |
-| `bytes32`   | `0x`-prefixed hex                      | Size must be 32. CCTP V2 nonce uses this. |
+| `bytes32`   | `0x`-prefixed hex                      | Size must be 32. |
 | `pubkey`    | `0x`-prefixed hex                      | Size must be 32. (Hex, not base58 — sufficient for correlation.) |
 | `keccak256` | `0x`-prefixed hex (32 bytes)           | Hashes from `offset` to the end of the payload. `size` is ignored; use `offset: 0` to hash the full message. |
 | _other_     | decimal string                         | Generic big-endian integer fallback over `size` bytes. Avoid relying on this for new bridges. |

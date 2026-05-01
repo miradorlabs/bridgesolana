@@ -19,25 +19,26 @@ const correlationDelimiter = ":"
 // Resolve extracts the correlation ID from raw on-chain data.
 //
 // Both legs gate parsing on the leading 8-byte Anchor discriminator and
-// return ("", false, nil) when it does not match — for source legs that
-// is the scan-and-skip signal callers use to walk a transaction's
-// candidate accounts; for destination legs it indicates the bytes did
-// not come from the expected ReceiveMessage instruction. Treat
-// matched=false as a data-shape failure on destination dispatch.
+// return ("", false, nil) when it does not match. For source legs the
+// scan-and-skip semantic lets callers walk a transaction's candidate
+// accounts cheaply; for destination legs matched=false indicates the
+// caller fed the wrong instruction data and should be treated as a
+// data-shape failure.
 //
-// For source legs (AccountDiscriminator non-zero), pass the full
-// MessageSent account data including the leading 8-byte Anchor
-// discriminator. Resolve verifies the discriminator, parses the
-// MessageSent layout (selected by messageVersion), and returns
-// (id, true, nil) on success.
+// For source legs (AccountDiscriminator non-zero), pass the full source
+// account data including its leading 8-byte Anchor discriminator. Resolve
+// verifies the discriminator, parses the account body, and returns
+// (id, true, nil) on success. The account layout is described by the
+// per-bridge config (header length is supplied by the bridge config; the
+// body that follows is a Borsh Vec<u8> message payload).
 //
-// For destination legs (AccountDiscriminator zero), pass the
-// ReceiveMessage instruction data including its 8-byte Anchor
+// For destination legs (AccountDiscriminator zero), pass the full
+// destination instruction data including its leading 8-byte Anchor
 // instruction discriminator. Resolve verifies the discriminator,
 // extracts the message bytes, and returns (id, true, nil) on success.
 //
 // Data-shape errors past the discriminator gate (truncated payload,
-// unsupported version, malformed fields) return ("", false, err).
+// malformed correlation field) return ("", false, err).
 func (r *Resolution) Resolve(data []byte) (id string, matched bool, err error) {
 	if r.AccountDiscriminator == ([8]byte{}) {
 		if r.instructionDiscriminator != ([8]byte{}) {
@@ -45,21 +46,17 @@ func (r *Resolution) Resolve(data []byte) (id string, matched bool, err error) {
 				return "", false, nil
 			}
 		}
-		msgBytes, err := parseReceiveMessageInstructionData(data)
-		if err != nil {
-			return "", false, err
-		}
-		correlationID, err := extractCorrelationFields(msgBytes, r.correlation)
-		if err != nil {
-			return "", false, err
-		}
-		return correlationID, true, nil
+		return r.parseAndExtract(data, r.instructionHeaderSize)
 	}
 
 	if len(data) < 8 || !bytes.Equal(data[:8], r.AccountDiscriminator[:]) {
 		return "", false, nil
 	}
-	msgBytes, err := parseMessageSentAccount(data, r.messageVersion)
+	return r.parseAndExtract(data, r.accountHeaderSize)
+}
+
+func (r *Resolution) parseAndExtract(data []byte, headerSize int) (string, bool, error) {
+	msgBytes, err := extractVecPayload(data, headerSize)
 	if err != nil {
 		return "", false, err
 	}
@@ -71,9 +68,8 @@ func (r *Resolution) Resolve(data []byte) (id string, matched bool, err error) {
 }
 
 // extractCorrelationFields extracts correlation field values from
-// decoded event data and joins them into a single opaque correlation
-// ID. The data parameter is the full decoded event bytes (including any
-// 8-byte discriminator).
+// decoded event or message data and joins them into a single opaque
+// correlation ID.
 func extractCorrelationFields(data []byte, fields []correlationField) (string, error) {
 	if len(fields) == 0 {
 		return "", fmt.Errorf("no correlation fields configured")
@@ -91,39 +87,11 @@ func extractCorrelationFields(data []byte, fields []correlationField) (string, e
 	return strings.Join(parts, correlationDelimiter), nil
 }
 
-// parseMessageSentAccount extracts CCTP message bytes from a MessageSent
-// account's raw data.
-//
-// Account layout:
-//   - V1 (version=0): discriminator(8) + rent_payer(32) + Vec<u8> at offset 40.
-//   - V2 (version=1): discriminator(8) + rent_payer(32) + created_at(8) + Vec<u8> at offset 48.
-//
-// Vec<u8> layout: 4-byte LE length prefix + data.
-func parseMessageSentAccount(data []byte, version int) ([]byte, error) {
-	var headerSize int
-	switch version {
-	case 0:
-		headerSize = 40 // disc(8) + rent_payer(32).
-	case 1:
-		headerSize = 48 // disc(8) + rent_payer(32) + created_at(8).
-	default:
-		return nil, fmt.Errorf("unsupported message version %d", version)
-	}
-
-	return extractPayload(data, headerSize)
-}
-
-// parseReceiveMessageInstructionData extracts CCTP message bytes from
-// ReceiveMessage instruction data. Layout: Anchor discriminator(8) +
-// Vec<u8> (4-byte LE length + data).
-func parseReceiveMessageInstructionData(data []byte) ([]byte, error) {
-	return extractPayload(data, 8)
-}
-
-// extractPayload extracts a Borsh Vec<u8> payload from raw data, skipping
-// headerSize bytes. Layout: header(headerSize) + Vec<u8> (4-byte LE length
-// prefix + data).
-func extractPayload(data []byte, headerSize int) ([]byte, error) {
+// extractVecPayload reads a Borsh Vec<u8> body that follows a
+// fixed-size header. Layout: header(headerSize) + Vec<u8> (4-byte
+// little-endian length prefix + data). The header is opaque to this
+// function; per-bridge configs supply the byte count.
+func extractVecPayload(data []byte, headerSize int) ([]byte, error) {
 	if len(data) < headerSize+4 {
 		return nil, fmt.Errorf("data too short: need %d bytes, have %d", headerSize+4, len(data))
 	}
