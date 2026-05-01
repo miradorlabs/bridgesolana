@@ -4,7 +4,7 @@ go 1.26.1
 
 require (
 	github.com/ethereum/go-ethereum v1.17.2
-	go.uber.org/zap v1.27.0
+	go.uber.org/zap v1.28.0
 )
 
 require (
