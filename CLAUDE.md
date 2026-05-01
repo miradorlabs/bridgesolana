@@ -41,9 +41,10 @@ The detector handles two log shapes that occur in Solana transactions:
   stack, so that nested CPI calls are scoped to the right program. The
   correlation ID lives off-log: callers must read the relevant `MessageSent`
   account (source) or `ReceiveMessage` instruction data (destination) via
-  RPC, then call `ParseMessageSentAccount` /
-  `ParseReceiveMessageInstructionData` followed by
-  `ExtractCorrelationFields`.
+  RPC, then call `Resolution.Resolve(data)` which returns
+  `(id, matched, err)`. For source legs `matched=false` signals an
+  account whose Anchor discriminator does not match the resolution —
+  callers can iterate candidate accounts cheaply.
 
 If you add a new bridge that uses Anchor `emit!`, prefer log mode. If it
 fires bridge intent through CPI without emitting an event, instruction

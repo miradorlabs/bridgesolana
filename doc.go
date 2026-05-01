@@ -12,9 +12,8 @@
 //     "Program data:" event. The detection is fully resolved.
 //   - A non-nil [Resolution] — the bridge fires through a CPI without
 //     emitting an event. The caller fetches the relevant on-chain data
-//     via RPC and feeds it through [ParseMessageSentAccount] or
-//     [ParseReceiveMessageInstructionData] and then
-//     [ExtractCorrelationFields] to produce the correlation ID.
+//     via RPC and passes it to [Resolution.Resolve] to obtain the
+//     correlation ID.
 //
 // Bridge configurations are embedded JSON, currently covering Circle CCTP
 // V1 and V2 source/destination legs.

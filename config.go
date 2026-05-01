@@ -39,7 +39,7 @@ type bridgeEvent struct {
 	Type        string             `json:"type"`        // "source" or "destination".
 	Name        string             `json:"name"`        // Event name (e.g. "MessageReceived") or instruction name (e.g. "SendMessage").
 	AnchorType  string             `json:"anchorType"`  // "event" or "account" (for discriminator computation); optional in instruction mode.
-	Correlation []CorrelationField `json:"correlation"` // Fields to extract for the correlation ID.
+	Correlation []correlationField `json:"correlation"` // Fields to extract for the correlation ID.
 
 	// Instruction-mode fields.
 	DetectionMode         string `json:"detectionMode,omitempty"`         // "log" (default) or "instruction".
@@ -183,7 +183,7 @@ func validateInstructionMode(filename string, idx int, ev *bridgeEvent) error {
 	return nil
 }
 
-func validateCorrelationFields(filename string, idx int, fields []CorrelationField) error {
+func validateCorrelationFields(filename string, idx int, fields []correlationField) error {
 	if len(fields) == 0 {
 		return fmt.Errorf("bridge config %s[%d] missing correlation fields", filename, idx)
 	}

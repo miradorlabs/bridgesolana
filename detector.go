@@ -100,9 +100,9 @@ func (d *BridgeDetector) Detect(logs []string) []Detection {
 				name := strings.TrimPrefix(trimmed, instrLogPrefix)
 				if sub, ok := d.instrSubs[instructionKey{programID: current, instructionName: name}]; ok {
 					res := sub.resolution
-					// Defensive copy: callers must not mutate detector state
-					// through Resolution.Correlation.
-					res.Correlation = cloneCorrelation(res.Correlation)
+					// Defensive copy: callers must not mutate detector
+					// state through Resolution's correlation slice.
+					res.correlation = cloneCorrelation(res.correlation)
 					out = append(out, Detection{
 						BridgeName:        sub.bridgeName,
 						BridgeDescription: sub.bridgeDesc,
@@ -161,8 +161,8 @@ func (d *BridgeDetector) addSubscription(cfg *bridgeConfig, progSet map[string]s
 			resolution: Resolution{
 				MessageProgramID:     cfg.BridgeEvent.MessageProgramID,
 				AccountDiscriminator: accountDisc,
-				MessageVersion:       cfg.BridgeEvent.MessageVersion,
-				Correlation:          cloneCorrelation(cfg.BridgeEvent.Correlation),
+				messageVersion:       cfg.BridgeEvent.MessageVersion,
+				correlation:          cloneCorrelation(cfg.BridgeEvent.Correlation),
 			},
 		}
 
@@ -191,7 +191,7 @@ func (d *BridgeDetector) matchLogData(currentProgram, b64 string) (Detection, bo
 	if !ok || sub.programID != currentProgram {
 		return Detection{}, false
 	}
-	correlationID, err := ExtractCorrelationFields(decoded, sub.correlation)
+	correlationID, err := extractCorrelationFields(decoded, sub.correlation)
 	if err != nil {
 		return Detection{}, false
 	}
@@ -208,7 +208,7 @@ type logSubscription struct {
 	bridgeName  string
 	bridgeDesc  string
 	legType     LegType
-	correlation []CorrelationField
+	correlation []correlationField
 }
 
 type instrSubscription struct {
@@ -234,8 +234,8 @@ func parseLegType(s string) (LegType, error) {
 	}
 }
 
-func cloneCorrelation(in []CorrelationField) []CorrelationField {
-	out := make([]CorrelationField, len(in))
+func cloneCorrelation(in []correlationField) []correlationField {
+	out := make([]correlationField, len(in))
 	copy(out, in)
 	return out
 }
