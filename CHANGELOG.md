@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/miradorlabs/bridgesolana/compare/v0.2.0...v0.2.1) (2026-05-01)
+
+
+### Code Refactoring
+
+* decouple extraction from CCTP-specific naming ([#7](https://github.com/miradorlabs/bridgesolana/issues/7)) ([ed48ea7](https://github.com/miradorlabs/bridgesolana/commit/ed48ea73e4e7407e30fd38182ed1345cdaccaaa2))
+
 ## [0.2.0](https://github.com/miradorlabs/bridgesolana/compare/v0.1.0...v0.2.0) (2026-05-01)
 
 
