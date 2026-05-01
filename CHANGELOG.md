@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.0](https://github.com/miradorlabs/bridgesolana/compare/v0.1.0...v0.2.0) (2026-05-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* callers using the v0.1.0 helpers must switch to det.Resolution.Resolve(data). Resolution.MessageVersion and Resolution.Correlation are no longer exported.
+
+### Features
+
+* collapse parse and extract into Resolution.Resolve ([#5](https://github.com/miradorlabs/bridgesolana/issues/5)) ([9de525c](https://github.com/miradorlabs/bridgesolana/commit/9de525c207b09b0fb04d6f06d90c4e620acbf555))
+
 ## [0.1.0](https://github.com/miradorlabs/bridgesolana/compare/v0.1.0...v0.1.0) (2026-05-01)
 
 
