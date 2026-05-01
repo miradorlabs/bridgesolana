@@ -177,8 +177,15 @@ func validateInstructionMode(filename string, idx int, ev *bridgeEvent) error {
 	if ev.Type == string(LegTypeDestination) && ev.InstructionDiscriminator == "" {
 		return fmt.Errorf("bridge config %s[%d] missing bridgeEvent.instructionDiscriminator for instruction-mode destination leg", filename, idx)
 	}
+	// Source legs must declare the account discriminator. Resolve's
+	// dispatch pivots on AccountDiscriminator being non-zero, so a
+	// missing discriminator would silently route source data through
+	// the destination parser.
+	if ev.Type == string(LegTypeSource) && ev.AccountDiscriminator == "" {
+		return fmt.Errorf("bridge config %s[%d] missing bridgeEvent.accountDiscriminator for instruction-mode source leg", filename, idx)
+	}
 	// Default source accountDataHeaderSize based on messageVersion.
-	if ev.Type == "source" && ev.AccountDataHeaderSize == 0 {
+	if ev.Type == string(LegTypeSource) && ev.AccountDataHeaderSize == 0 {
 		switch ev.MessageVersion {
 		case 0:
 			ev.AccountDataHeaderSize = 40 // disc(8) + rent_payer(32).
