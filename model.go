@@ -1,51 +1,81 @@
 package bridgesolana
 
-// BridgeDetails captures normalized data extracted from a Solana bridge program log.
-type BridgeDetails struct {
+// LegType identifies whether a detected bridge event is the source leg
+// or the destination leg of a cross-chain transfer.
+type LegType string
+
+const (
+	LegTypeSource      LegType = "source"
+	LegTypeDestination LegType = "destination"
+)
+
+// Detection is a single bridge event extracted from a Solana
+// transaction's program logs.
+//
+// CorrelationID is populated when the detector could extract it directly
+// from the logs (Anchor "Program data:" events). Otherwise Resolution is
+// non-nil and the caller must fetch the relevant account or instruction
+// data via RPC and feed it into the package-level helpers
+// ([ParseMessageSentAccount] / [ParseReceiveMessageInstructionData] /
+// [ExtractCorrelationFields]) to produce the correlation ID.
+type Detection struct {
+	BridgeName        string
+	BridgeDescription string
 	BridgeLegType     LegType
 	CorrelationID     string
-	BridgeName        string
-	BridgeDescription string
+	Resolution        *Resolution
 }
 
-// InstructionDetection captures a detected instruction-mode bridge event that needs RPC resolution.
-type InstructionDetection struct {
-	Subscription *BridgeSubscription
-	ProgramID    string // The program ID that was executing when the instruction was detected.
+// Resolution describes how to obtain the correlation ID for an
+// instruction-mode detection that did not carry it in-band.
+//
+// Dispatch on the parent [Detection]'s BridgeLegType:
+//
+//   - Source ([LegTypeSource]): fetch the account at MessageProgramID
+//     whose data starts with AccountDiscriminator, then call
+//     [ParseMessageSentAccount](data, MessageVersion).
+//   - Destination ([LegTypeDestination]): fetch the ReceiveMessage
+//     instruction data emitted by MessageProgramID, then call
+//     [ParseReceiveMessageInstructionData](data).
+//
+// In both cases, feed the returned message bytes into
+// [ExtractCorrelationFields](msgBytes, Correlation) to produce the ID.
+type Resolution struct {
+	// MessageProgramID is the program that holds the on-chain data
+	// containing the correlation ID — a MessageSent account for source
+	// legs, the ReceiveMessage instruction data for destination legs.
+	MessageProgramID string
+
+	// AccountDiscriminator is the 8-byte Anchor account discriminator
+	// used to identify the relevant account among the transaction's
+	// accounts. Set for source legs only; unused for destination legs.
+	AccountDiscriminator [8]byte
+
+	// MessageVersion selects the account layout for source legs:
+	// 0 = CCTP V1, 1 = CCTP V2. Pass to [ParseMessageSentAccount].
+	MessageVersion int
+
+	// Correlation is the field-extraction spec to feed into
+	// [ExtractCorrelationFields] once the message bytes have been
+	// parsed.
+	Correlation []CorrelationField
 }
 
-// BridgeSubscription describes a Solana program + event discriminator to watch for bridge events.
-type BridgeSubscription struct {
-	ProgramID         string
-	Discriminator     [8]byte // Anchor discriminator for log-mode detection.
-	BridgeName        string
-	BridgeDescription string
-	BridgeLegType     LegType
-	EventName         string
-	Correlation       []correlationField
-
-	// Instruction-mode fields.
-	DetectionMode         string  // "log" or "instruction".
-	InstructionName       string  // Instruction name to match (e.g. "SendMessage").
-	AccountDiscriminator  [8]byte // 8-byte discriminator for finding the right account (source legs).
-	HasAccountDisc        bool    // Whether AccountDiscriminator was set from config.
-	MessageVersion        int     // 0 = v1, 1 = v2.
-	MessageProgramID      string  // Program that holds the MessageSent account or instruction data.
-	DataHeaderSize        int     // Destination: bytes to skip in instruction data before Borsh Vec.
-	AccountDataHeaderSize int     // Source: bytes to skip in account data before Borsh Vec.
-}
-
-// correlationField describes a single field to extract from decoded event data.
-// Used for both JSON config decoding and runtime extraction.
-type correlationField struct {
-	Offset int    `json:"offset"` // Byte offset within decoded event data (after discriminator).
-	Size   int    `json:"size"`   // Number of bytes to extract.
-	Type   string `json:"type"`   // "uint64_le", "uint32_le", "bytes32", "keccak256", etc.
-	Field  string `json:"field"`  // Human-readable name (e.g. "nonce").
-}
-
-// instructionKey indexes instruction-mode subscriptions by (programID, instructionName).
-type instructionKey struct {
-	ProgramID       string
-	InstructionName string
+// CorrelationField describes a single field to extract from decoded
+// event or message data and contribute to the correlation ID string.
+type CorrelationField struct {
+	// Offset is the byte offset into the decoded data where the field
+	// begins.
+	Offset int `json:"offset"`
+	// Size is the field's length in bytes. Required for fixed-size
+	// types (uintN, bytes32, pubkey); 0 is valid for "keccak256",
+	// which hashes from Offset to the end of the data.
+	Size int `json:"size"`
+	// Type names the extraction strategy: "uint64_le", "uint32_le",
+	// "uint64", "uint32", "bytes32", "pubkey", or "keccak256". Unknown
+	// values fall back to a generic big-endian integer of Size bytes.
+	Type string `json:"type"`
+	// Field is a human-readable label used only in error messages
+	// (e.g. "nonce"). It is not part of the resulting correlation ID.
+	Field string `json:"field"`
 }

@@ -16,18 +16,13 @@ const (
 	detectionModeInstruction = "instruction"
 )
 
-//go:embed config/*/*.json
+//go:embed config/*.json
 var bridgeConfigFS embed.FS
 
-var (
-	loadOnce       sync.Once
-	loadErr        error
-	configsByChain map[string][]*bridgeConfig
-)
+var loadConfigs = sync.OnceValues(loadBridgeConfigs)
 
 // bridgeConfig is the JSON-serialized shape of a Solana bridge definition.
 type bridgeConfig struct {
-	ChainName         string        `json:"chainName"`
 	BridgeName        string        `json:"bridgeName"`
 	BridgeDescription string        `json:"bridgeDescription"`
 	BridgeProgram     bridgeProgram `json:"bridgeProgram"`
@@ -44,7 +39,7 @@ type bridgeEvent struct {
 	Type        string             `json:"type"`        // "source" or "destination".
 	Name        string             `json:"name"`        // Event name (e.g. "MessageReceived") or instruction name (e.g. "SendMessage").
 	AnchorType  string             `json:"anchorType"`  // "event" or "account" (for discriminator computation); optional in instruction mode.
-	Correlation []correlationField `json:"correlation"` // Fields to extract for the correlation ID.
+	Correlation []CorrelationField `json:"correlation"` // Fields to extract for the correlation ID.
 
 	// Instruction-mode fields.
 	DetectionMode         string `json:"detectionMode,omitempty"`         // "log" (default) or "instruction".
@@ -55,12 +50,12 @@ type bridgeEvent struct {
 	AccountDataHeaderSize int    `json:"accountDataHeaderSize,omitempty"` // Source: bytes before Vec in account data.
 }
 
-// forChain returns Solana bridge definitions scoped to a chain name (case-insensitive).
-func forChain(chain string) ([]*bridgeConfig, error) {
-	if err := ensureLoaded(); err != nil {
+// allConfigs returns all embedded Solana bridge definitions.
+func allConfigs() ([]*bridgeConfig, error) {
+	cfgs, err := loadConfigs()
+	if err != nil {
 		return nil, err
 	}
-	cfgs := configsByChain[strings.ToLower(chain)]
 	out := make([]*bridgeConfig, len(cfgs))
 	copy(out, cfgs)
 	return out, nil
@@ -76,65 +71,39 @@ func computeAnchorDiscriminator(anchorType, name string) [8]byte {
 	return disc
 }
 
-func ensureLoaded() error {
-	loadOnce.Do(func() {
-		configsByChain, loadErr = loadBridgeConfigs()
-	})
-	return loadErr
-}
-
-func loadBridgeConfigs() (map[string][]*bridgeConfig, error) {
-	chainDirs, err := bridgeConfigFS.ReadDir("config")
+func loadBridgeConfigs() ([]*bridgeConfig, error) {
+	entries, err := bridgeConfigFS.ReadDir("config")
 	if err != nil {
 		return nil, fmt.Errorf("failed to read embedded Solana bridge config directory: %w", err)
 	}
 
-	byChain := make(map[string][]*bridgeConfig)
+	var out []*bridgeConfig
 
-	for _, chainDir := range chainDirs {
-		if !chainDir.IsDir() {
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
-		chainName := chainDir.Name()
 
-		jsonFiles, err := bridgeConfigFS.ReadDir(path.Join("config", chainName))
+		filePath := path.Join("config", entry.Name())
+		raw, err := bridgeConfigFS.ReadFile(filePath)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read chain directory %s: %w", chainName, err)
+			return nil, fmt.Errorf("failed to read %s: %w", filePath, err)
 		}
 
-		for _, entry := range jsonFiles {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-				continue
+		var fileConfigs []*bridgeConfig
+		if err := json.Unmarshal(raw, &fileConfigs); err != nil {
+			return nil, fmt.Errorf("failed to decode %s: %w", filePath, err)
+		}
+
+		for idx, cfg := range fileConfigs {
+			if err := validateBridgeConfig(filePath, idx, cfg); err != nil {
+				return nil, err
 			}
-
-			filePath := path.Join("config", chainName, entry.Name())
-			raw, err := bridgeConfigFS.ReadFile(filePath)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read %s: %w", filePath, err)
-			}
-
-			var fileConfigs []*bridgeConfig
-			if err := json.Unmarshal(raw, &fileConfigs); err != nil {
-				return nil, fmt.Errorf("failed to decode %s: %w", filePath, err)
-			}
-
-			for idx, cfg := range fileConfigs {
-				if err := validateBridgeConfig(filePath, idx, cfg); err != nil {
-					return nil, err
-				}
-
-				if !strings.EqualFold(cfg.ChainName, chainName) {
-					return nil, fmt.Errorf("bridge config %s[%d] chainName %q does not match directory %q",
-						filePath, idx, cfg.ChainName, chainName)
-				}
-
-				chainKey := strings.ToLower(cfg.ChainName)
-				byChain[chainKey] = append(byChain[chainKey], cfg)
-			}
+			out = append(out, cfg)
 		}
 	}
 
-	return byChain, nil
+	return out, nil
 }
 
 func validateBridgeConfig(filename string, idx int, cfg *bridgeConfig) error {
@@ -155,7 +124,6 @@ func validateRequiredStrings(filename string, idx int, cfg *bridgeConfig) error 
 		field string
 		value *string
 	}{
-		{"chainName", &cfg.ChainName},
 		{"bridgeName", &cfg.BridgeName},
 		{"bridgeDescription", &cfg.BridgeDescription},
 	}
@@ -215,7 +183,7 @@ func validateInstructionMode(filename string, idx int, ev *bridgeEvent) error {
 	return nil
 }
 
-func validateCorrelationFields(filename string, idx int, fields []correlationField) error {
+func validateCorrelationFields(filename string, idx int, fields []CorrelationField) error {
 	if len(fields) == 0 {
 		return fmt.Errorf("bridge config %s[%d] missing correlation fields", filename, idx)
 	}

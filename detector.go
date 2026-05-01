@@ -2,225 +2,242 @@ package bridgesolana
 
 import (
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
-
-	"go.uber.org/zap"
 )
 
-// BridgeDetector detects bridge events from Solana program logs.
-// It supports two detection modes:
-//   - "log" mode: scans for "Program data:" log lines, decodes base64,
-//     matches 8-byte Anchor discriminators.
-//   - "instruction" mode: scans for "Program log: Instruction: <Name>" lines
-//     within target program invocations.
+// BridgeDetector scans Solana program logs and emits Detection records.
+// It is read-only after construction and safe to share across goroutines.
 type BridgeDetector struct {
-	// Log-mode: subscriptions keyed by discriminator for O(1) lookup.
-	subscriptions map[[8]byte]*BridgeSubscription
-	// Instruction-mode: subscriptions keyed by {programID, instructionName}.
-	instructionSubscriptions map[instructionKey]*BridgeSubscription
-	programIDs               map[string]struct{} // set of all program IDs to match (both modes).
-	chainName                string
+	logSubs   map[[8]byte]*logSubscription
+	instrSubs map[instructionKey]*instrSubscription
+	progIDs   []string // sorted, deduped; for ProgramIDs().
 }
 
-// NewBridgeDetector creates a detector for the given chain.
-func NewBridgeDetector(chainName string) (*BridgeDetector, error) {
-	resolver := NewResolver(zap.NewNop())
-	subs, err := resolver.SubscriptionsForChain(chainName)
+// NewBridgeDetector builds a detector from the embedded bridge configs.
+func NewBridgeDetector() (*BridgeDetector, error) {
+	cfgs, err := allConfigs()
 	if err != nil {
-		return nil, fmt.Errorf("failed to load Solana bridge configs for %s: %w", chainName, err)
+		return nil, fmt.Errorf("failed to load Solana bridge configs: %w", err)
 	}
 
-	subscriptions := make(map[[8]byte]*BridgeSubscription)
-	instrSubs := make(map[instructionKey]*BridgeSubscription)
-	programIDs := make(map[string]struct{})
+	d := &BridgeDetector{
+		logSubs:   make(map[[8]byte]*logSubscription),
+		instrSubs: make(map[instructionKey]*instrSubscription),
+	}
 
-	for _, sub := range subs {
-		programIDs[sub.ProgramID] = struct{}{}
-		if sub.MessageProgramID != "" {
-			programIDs[sub.MessageProgramID] = struct{}{}
-		}
-
-		switch sub.DetectionMode {
-		case detectionModeInstruction:
-			// Key by the program that actually emits the instruction log.
-			// For source legs (e.g. DepositForBurn → SendMessage), the
-			// SendMessage instruction is emitted by the MessageTransmitter
-			// (messageProgramID), not the TokenMessengerMinter. For
-			// destination legs the emitting program may match the
-			// messageProgramID.
-			instrProgramID := sub.MessageProgramID
-			if instrProgramID == "" {
-				instrProgramID = sub.ProgramID
-			}
-			key := instructionKey{
-				ProgramID:       instrProgramID,
-				InstructionName: sub.InstructionName,
-			}
-			instrSubs[key] = sub
-		default: // "log" mode.
-			subscriptions[sub.Discriminator] = sub
+	progSet := make(map[string]struct{})
+	for _, cfg := range cfgs {
+		if err := d.addSubscription(cfg, progSet); err != nil {
+			return nil, err
 		}
 	}
 
-	return &BridgeDetector{
-		subscriptions:            subscriptions,
-		instructionSubscriptions: instrSubs,
-		programIDs:               programIDs,
-		chainName:                chainName,
-	}, nil
+	d.progIDs = slices.Sorted(maps.Keys(progSet))
+
+	return d, nil
 }
 
-// ChainName returns the chain this detector was constructed for.
-func (d *BridgeDetector) ChainName() string {
-	return d.chainName
+// ProgramIDs returns the unique set of Solana program IDs the detector
+// matches against, sorted for stable output. Pass these to
+// LogsSubscribeMentions / SubscribeProgramLogs to receive every
+// transaction the detector can recognize.
+func (d *BridgeDetector) ProgramIDs() []string {
+	out := make([]string, len(d.progIDs))
+	copy(out, d.progIDs)
+	return out
 }
 
-// DetectFromLogs scans program logs for bridge events using log-mode detection.
-// Logs are the raw log strings from a Solana transaction (e.g. from
-// LogsSubscribeMentions). Returns all detected bridge details.
-func (d *BridgeDetector) DetectFromLogs(logs []string) []*BridgeDetails {
-	if len(d.subscriptions) == 0 {
+// Detect scans logs (the raw "Program ..." strings from a single Solana
+// transaction's metadata) and returns one [Detection] per matched bridge
+// event. The detector tracks the program invocation stack across log
+// lines, so both "Program data:" events and "Program log: Instruction:"
+// lines are scoped to the program currently executing.
+//
+// A [Detection] with a non-empty CorrelationID is fully resolved. A
+// [Detection] with a non-nil [Resolution] requires the caller to fetch
+// the relevant account or instruction data via RPC and call the package
+// helpers to extract the correlation ID.
+func (d *BridgeDetector) Detect(logs []string) []Detection {
+	if len(d.logSubs) == 0 && len(d.instrSubs) == 0 {
 		return nil
 	}
 
-	var results []*BridgeDetails
+	var (
+		out      []Detection
+		stack    []string
+		hasLog   = len(d.logSubs) > 0
+		hasInstr = len(d.instrSubs) > 0
+	)
 
-	// Track which program is currently executing.
-	inTargetProgram := false
+	const (
+		invokePrefix    = "Program "
+		invokeMarker    = " invoke ["
+		dataPrefix      = "Program data: "
+		instrLogPrefix  = "Program log: Instruction: "
+		successSuffix   = " success"
+		failedSubstring = " failed"
+	)
 
 	for _, line := range logs {
 		trimmed := strings.TrimSpace(line)
 
-		// Top-level program invocation.
-		if strings.HasPrefix(trimmed, "Program ") && strings.HasSuffix(trimmed, " invoke [1]") {
-			programID := extractProgramID(trimmed)
-			_, inTargetProgram = d.programIDs[programID]
-			continue
-		}
-
-		// Inner invocations (invoke [2], [3], ...).
-		if strings.HasPrefix(trimmed, "Program ") && strings.Contains(trimmed, " invoke [") {
-			programID := extractProgramID(trimmed)
-			if _, ok := d.programIDs[programID]; ok {
-				inTargetProgram = true
+		// invoke / exit / inside-program are mutually exclusive — keep
+		// these as `else if` so the ordering dependency is explicit.
+		if strings.HasPrefix(trimmed, invokePrefix) && strings.Contains(trimmed, invokeMarker) {
+			stack = append(stack, extractProgramID(trimmed))
+		} else if strings.HasPrefix(trimmed, invokePrefix) && (strings.HasSuffix(trimmed, successSuffix) || strings.Contains(trimmed, failedSubstring)) {
+			if len(stack) > 0 {
+				stack = stack[:len(stack)-1]
 			}
-			continue
-		}
+		} else if len(stack) > 0 {
+			current := stack[len(stack)-1]
 
-		// Reset state on program success/failure.
-		if strings.HasPrefix(trimmed, "Program ") && (strings.HasSuffix(trimmed, " success") || strings.Contains(trimmed, " failed")) {
-			programID := extractProgramID(trimmed)
-			if _, ok := d.programIDs[programID]; ok {
-				inTargetProgram = false
+			if hasInstr && strings.HasPrefix(trimmed, instrLogPrefix) {
+				name := strings.TrimPrefix(trimmed, instrLogPrefix)
+				if sub, ok := d.instrSubs[instructionKey{programID: current, instructionName: name}]; ok {
+					res := sub.resolution
+					// Defensive copy: callers must not mutate detector state
+					// through Resolution.Correlation.
+					res.Correlation = cloneCorrelation(res.Correlation)
+					out = append(out, Detection{
+						BridgeName:        sub.bridgeName,
+						BridgeDescription: sub.bridgeDesc,
+						BridgeLegType:     sub.legType,
+						Resolution:        &res,
+					})
+				}
+			} else if hasLog && strings.HasPrefix(trimmed, dataPrefix) {
+				if det, ok := d.matchLogData(current, strings.TrimPrefix(trimmed, dataPrefix)); ok {
+					out = append(out, det)
+				}
 			}
-			continue
 		}
-
-		// Only process "Program data:" lines while inside a target program.
-		if !inTargetProgram {
-			continue
-		}
-
-		if !strings.HasPrefix(trimmed, "Program data: ") {
-			continue
-		}
-
-		b64Data := strings.TrimPrefix(trimmed, "Program data: ")
-		decoded, err := base64.StdEncoding.DecodeString(b64Data)
-		if err != nil {
-			continue
-		}
-
-		if len(decoded) < 8 {
-			continue
-		}
-
-		var disc [8]byte
-		copy(disc[:], decoded[:8])
-
-		sub, found := d.subscriptions[disc]
-		if !found {
-			continue
-		}
-
-		correlationID, err := ExtractCorrelationFields(decoded, sub.Correlation)
-		if err != nil {
-			continue
-		}
-
-		results = append(results, &BridgeDetails{
-			BridgeLegType:     sub.BridgeLegType,
-			CorrelationID:     correlationID,
-			BridgeName:        sub.BridgeName,
-			BridgeDescription: sub.BridgeDescription,
-		})
 	}
 
-	return results
+	return out
 }
 
-// DetectInstructionBridges scans logs for instruction-mode bridge events.
-// It looks for "Program log: Instruction: <Name>" lines within target
-// program invocations. Returns detections that need RPC resolution to
-// extract correlation data.
-func (d *BridgeDetector) DetectInstructionBridges(logs []string) []*InstructionDetection {
-	if len(d.instructionSubscriptions) == 0 {
-		return nil
+func (d *BridgeDetector) addSubscription(cfg *bridgeConfig, progSet map[string]struct{}) error {
+	legType, err := parseLegType(cfg.BridgeEvent.Type)
+	if err != nil {
+		return fmt.Errorf("bridge %s: %w", cfg.BridgeName, err)
 	}
 
-	var results []*InstructionDetection
+	progSet[cfg.BridgeProgram.ProgramID] = struct{}{}
+	if cfg.BridgeEvent.MessageProgramID != "" {
+		progSet[cfg.BridgeEvent.MessageProgramID] = struct{}{}
+	}
 
-	// Track program invocation stack.
-	var programStack []string
-
-	for _, line := range logs {
-		trimmed := strings.TrimSpace(line)
-
-		// Push on program invoke.
-		if strings.HasPrefix(trimmed, "Program ") && strings.Contains(trimmed, " invoke [") {
-			programID := extractProgramID(trimmed)
-			programStack = append(programStack, programID)
-			continue
+	switch cfg.BridgeEvent.DetectionMode {
+	case detectionModeInstruction:
+		// The instruction log is emitted by the program that *runs* the
+		// instruction, which is the messageProgramID for CPI'd legs.
+		emittingProg := cfg.BridgeEvent.MessageProgramID
+		if emittingProg == "" {
+			emittingProg = cfg.BridgeProgram.ProgramID
 		}
 
-		// Pop on program exit.
-		if strings.HasPrefix(trimmed, "Program ") && (strings.HasSuffix(trimmed, " success") || strings.Contains(trimmed, " failed")) {
-			if len(programStack) > 0 {
-				programStack = programStack[:len(programStack)-1]
+		var accountDisc [8]byte
+		if cfg.BridgeEvent.AccountDiscriminator != "" {
+			b, err := hex.DecodeString(cfg.BridgeEvent.AccountDiscriminator)
+			if err != nil {
+				return fmt.Errorf("bridge %s: invalid accountDiscriminator hex %q: %w", cfg.BridgeName, cfg.BridgeEvent.AccountDiscriminator, err)
 			}
-			continue
+			if len(b) != 8 {
+				return fmt.Errorf("bridge %s: accountDiscriminator must be 8 bytes, got %d", cfg.BridgeName, len(b))
+			}
+			copy(accountDisc[:], b)
 		}
 
-		if len(programStack) == 0 {
-			continue
+		key := instructionKey{programID: emittingProg, instructionName: cfg.BridgeEvent.Name}
+		d.instrSubs[key] = &instrSubscription{
+			bridgeName: cfg.BridgeName,
+			bridgeDesc: cfg.BridgeDescription,
+			legType:    legType,
+			resolution: Resolution{
+				MessageProgramID:     cfg.BridgeEvent.MessageProgramID,
+				AccountDiscriminator: accountDisc,
+				MessageVersion:       cfg.BridgeEvent.MessageVersion,
+				Correlation:          cloneCorrelation(cfg.BridgeEvent.Correlation),
+			},
 		}
 
-		const instrPrefix = "Program log: Instruction: "
-		if !strings.HasPrefix(trimmed, instrPrefix) {
-			continue
+	default: // log mode.
+		disc := computeAnchorDiscriminator(cfg.BridgeEvent.AnchorType, cfg.BridgeEvent.Name)
+		d.logSubs[disc] = &logSubscription{
+			programID:   cfg.BridgeProgram.ProgramID,
+			bridgeName:  cfg.BridgeName,
+			bridgeDesc:  cfg.BridgeDescription,
+			legType:     legType,
+			correlation: cloneCorrelation(cfg.BridgeEvent.Correlation),
 		}
-
-		instrName := strings.TrimPrefix(trimmed, instrPrefix)
-		currentProgram := programStack[len(programStack)-1]
-
-		key := instructionKey{
-			ProgramID:       currentProgram,
-			InstructionName: instrName,
-		}
-
-		sub, found := d.instructionSubscriptions[key]
-		if !found {
-			continue
-		}
-
-		results = append(results, &InstructionDetection{
-			Subscription: sub,
-			ProgramID:    currentProgram,
-		})
 	}
 
-	return results
+	return nil
+}
+
+func (d *BridgeDetector) matchLogData(currentProgram, b64 string) (Detection, bool) {
+	decoded, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil || len(decoded) < 8 {
+		return Detection{}, false
+	}
+	var disc [8]byte
+	copy(disc[:], decoded[:8])
+	sub, ok := d.logSubs[disc]
+	if !ok || sub.programID != currentProgram {
+		return Detection{}, false
+	}
+	correlationID, err := ExtractCorrelationFields(decoded, sub.correlation)
+	if err != nil {
+		return Detection{}, false
+	}
+	return Detection{
+		BridgeName:        sub.bridgeName,
+		BridgeDescription: sub.bridgeDesc,
+		BridgeLegType:     sub.legType,
+		CorrelationID:     correlationID,
+	}, true
+}
+
+type logSubscription struct {
+	programID   string
+	bridgeName  string
+	bridgeDesc  string
+	legType     LegType
+	correlation []CorrelationField
+}
+
+type instrSubscription struct {
+	bridgeName string
+	bridgeDesc string
+	legType    LegType
+	resolution Resolution
+}
+
+type instructionKey struct {
+	programID       string
+	instructionName string
+}
+
+func parseLegType(s string) (LegType, error) {
+	switch strings.ToLower(s) {
+	case "source":
+		return LegTypeSource, nil
+	case "destination":
+		return LegTypeDestination, nil
+	default:
+		return "", fmt.Errorf("unsupported event type %q", s)
+	}
+}
+
+func cloneCorrelation(in []CorrelationField) []CorrelationField {
+	out := make([]CorrelationField, len(in))
+	copy(out, in)
+	return out
 }
 
 // extractProgramID parses the program ID from a log line like

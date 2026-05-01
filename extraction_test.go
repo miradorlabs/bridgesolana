@@ -34,7 +34,7 @@ func TestParseMessageSentAccount_V1(t *testing.T) {
 		t.Fatalf("expected message length %d, got %d", len(cctpMessage), len(msgBytes))
 	}
 
-	nonce, err := ExtractCorrelationFields(msgBytes, []correlationField{
+	nonce, err := ExtractCorrelationFields(msgBytes, []CorrelationField{
 		{Offset: 12, Size: 8, Type: "uint64", Field: "nonce"},
 	})
 	if err != nil {
@@ -113,7 +113,7 @@ func TestParseReceiveMessageInstructionData(t *testing.T) {
 		t.Fatalf("expected message length %d, got %d", len(cctpMessage), len(msgBytes))
 	}
 
-	nonce, err := ExtractCorrelationFields(msgBytes, []correlationField{
+	nonce, err := ExtractCorrelationFields(msgBytes, []CorrelationField{
 		{Offset: 12, Size: 8, Type: "uint64", Field: "nonce"},
 	})
 	if err != nil {
@@ -138,7 +138,7 @@ func TestExtractCorrelationFields_MatchesEVMFormat(t *testing.T) {
 	cctpMessage := make([]byte, 20)
 	binary.BigEndian.PutUint64(cctpMessage[12:20], 670212)
 
-	nonce, err := ExtractCorrelationFields(cctpMessage, []correlationField{
+	nonce, err := ExtractCorrelationFields(cctpMessage, []CorrelationField{
 		{Offset: 12, Size: 8, Type: "uint64", Field: "nonce"},
 	})
 	if err != nil {
@@ -170,7 +170,7 @@ func TestExtractCorrelationFields_Keccak256(t *testing.T) {
 		},
 	}
 
-	fields := []correlationField{{Offset: 0, Type: "keccak256", Field: "message_hash"}}
+	fields := []CorrelationField{{Offset: 0, Type: "keccak256", Field: "message_hash"}}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -193,7 +193,7 @@ func TestExtractCorrelationFields_Bytes32(t *testing.T) {
 	// V2 uses bytes32 nonce at offset 12.
 	cctpMessage := make([]byte, 44)
 
-	nonce, err := ExtractCorrelationFields(cctpMessage, []correlationField{
+	nonce, err := ExtractCorrelationFields(cctpMessage, []CorrelationField{
 		{Offset: 12, Size: 32, Type: "bytes32", Field: "nonce"},
 	})
 	if err != nil {

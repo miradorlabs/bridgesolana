@@ -1,6 +1,5 @@
 [
   {
-    "chainName": "solana",
     "bridgeName": "cctp",
     "bridgeDescription": "Circle CCTP V1 - DepositForBurn (Source)",
     "bridgeProgram": {
@@ -25,7 +24,6 @@
     }
   },
   {
-    "chainName": "solana",
     "bridgeName": "cctp",
     "bridgeDescription": "Circle CCTP V1 - ReceiveMessage (Destination)",
     "bridgeProgram": {
@@ -48,7 +46,6 @@
     }
   },
   {
-    "chainName": "solana",
     "bridgeName": "cctp-v2",
     "bridgeDescription": "Circle CCTP V2 - DepositForBurn (Source)",
     "bridgeProgram": {
@@ -72,7 +69,6 @@
     }
   },
   {
-    "chainName": "solana",
     "bridgeName": "cctp-v2",
     "bridgeDescription": "Circle CCTP V2 - ReceiveMessage (Destination)",
     "bridgeProgram": {
