@@ -8,7 +8,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// Resolver resolves Solana bridge subscriptions for a chain.
+// Resolver resolves Solana bridge subscriptions.
 type Resolver struct {
 	logger *zap.Logger
 }
@@ -20,11 +20,9 @@ func NewResolver(logger *zap.Logger) *Resolver {
 	}
 }
 
-// SubscriptionsForChain builds bridge subscriptions for the given chain
-// using embedded JSON configuration.
-func (r *Resolver) SubscriptionsForChain(chain string) ([]*BridgeSubscription, error) {
-	logger := r.logger.With(zap.String("chain", chain))
-	cfgs, err := forChain(chain)
+// Subscriptions builds bridge subscriptions from embedded JSON configuration.
+func (r *Resolver) Subscriptions() ([]*BridgeSubscription, error) {
+	cfgs, err := allConfigs()
 	if err != nil {
 		return nil, err
 	}
@@ -36,7 +34,7 @@ func (r *Resolver) SubscriptionsForChain(chain string) ([]*BridgeSubscription, e
 			return nil, err
 		}
 
-		logger.Info("loaded Solana bridge",
+		r.logger.Info("loaded Solana bridge",
 			zap.String("bridge_name", cfg.BridgeName),
 			zap.String("description", cfg.BridgeDescription),
 			zap.String("leg_type", cfg.BridgeEvent.Type),
@@ -50,9 +48,9 @@ func (r *Resolver) SubscriptionsForChain(chain string) ([]*BridgeSubscription, e
 	return subs, nil
 }
 
-// ProgramIDs returns the unique set of program IDs to subscribe to for the given chain.
-func (r *Resolver) ProgramIDs(chain string) ([]string, error) {
-	cfgs, err := forChain(chain)
+// ProgramIDs returns the unique set of program IDs to subscribe to.
+func (r *Resolver) ProgramIDs() ([]string, error) {
+	cfgs, err := allConfigs()
 	if err != nil {
 		return nil, err
 	}

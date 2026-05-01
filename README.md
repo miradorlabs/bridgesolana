@@ -10,7 +10,7 @@ Detect cross-chain bridge events from Solana program logs.
 > **Status:** pre-1.0. The public API may change in any `0.x.0` release; patch
 > releases (`0.x.y`) will not break callers. See [CHANGELOG.md](CHANGELOG.md).
 
-Build a `BridgeDetector` once per chain, then hand it the raw log strings from a Solana transaction. The detector supports two complementary modes:
+Build a `BridgeDetector` once at process start, then hand it the raw log strings from a Solana transaction. The detector supports two complementary modes:
 
 - **Log mode** (`DetectFromLogs`) — scans `Program data:` lines, decodes base64, matches 8-byte Anchor discriminators, and returns `BridgeDetails` directly with the bridge name, leg type, and correlation ID.
 - **Instruction mode** (`DetectInstructionBridges`) — scans `Program log: Instruction: <Name>` lines within target program invocations and returns `InstructionDetection` records. Callers then resolve the correlation ID by reading the relevant account or instruction data from RPC and feeding it into `ExtractPayload` / `ExtractCorrelationFields`.
@@ -20,7 +20,7 @@ import (
     "github.com/miradorlabs/bridgesolana"
 )
 
-detector, err := bridgesolana.NewBridgeDetector("solana")
+detector, err := bridgesolana.NewBridgeDetector()
 if err != nil {
     log.Fatal(err)
 }
@@ -53,8 +53,7 @@ for _, det := range detector.DetectInstructionBridges(logs) {
 ```go
 type BridgeDetector struct{ /* ... */ }
 
-func NewBridgeDetector(chainName string) (*BridgeDetector, error)
-func (d *BridgeDetector) ChainName() string
+func NewBridgeDetector() (*BridgeDetector, error)
 func (d *BridgeDetector) DetectFromLogs(logs []string) []*BridgeDetails
 func (d *BridgeDetector) DetectInstructionBridges(logs []string) []*InstructionDetection
 
@@ -85,15 +84,15 @@ func ParseReceiveMessageInstructionData(data []byte) ([]byte, error)
 // Build subscriptions and program-ID lists for an RPC subscriber.
 type Resolver struct{ /* ... */ }
 func NewResolver(logger *zap.Logger) *Resolver
-func (r *Resolver) SubscriptionsForChain(chain string) ([]*BridgeSubscription, error)
-func (r *Resolver) ProgramIDs(chain string) ([]string, error)
+func (r *Resolver) Subscriptions() ([]*BridgeSubscription, error)
+func (r *Resolver) ProgramIDs() ([]string, error)
 ```
 
 A `BridgeDetector` is read-only after construction and safe to share across goroutines.
 
 ## How it works
 
-Bridge configurations are embedded JSON, one file per protocol per chain (currently `config/solana/cctp.json`). Each entry declares the program ID, the event or instruction name, and how to extract the correlation ID from the decoded payload — by fixed-offset uint64/uint32/bytes32 fields, or as a keccak256 hash of the message tail.
+Bridge configurations are embedded JSON, one file per protocol (currently `config/cctp.json`). Each entry declares the program ID, the event or instruction name, and how to extract the correlation ID from the decoded payload — by fixed-offset uint64/uint32/bytes32 fields, or as a keccak256 hash of the message tail.
 
 `NewBridgeDetector` builds two `O(1)` lookup maps:
 - discriminator → subscription (log mode)

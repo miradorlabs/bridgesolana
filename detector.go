@@ -20,15 +20,15 @@ type BridgeDetector struct {
 	// Instruction-mode: subscriptions keyed by {programID, instructionName}.
 	instructionSubscriptions map[instructionKey]*BridgeSubscription
 	programIDs               map[string]struct{} // set of all program IDs to match (both modes).
-	chainName                string
 }
 
-// NewBridgeDetector creates a detector for the given chain.
-func NewBridgeDetector(chainName string) (*BridgeDetector, error) {
+// NewBridgeDetector creates a detector loaded with the embedded Solana
+// bridge configurations.
+func NewBridgeDetector() (*BridgeDetector, error) {
 	resolver := NewResolver(zap.NewNop())
-	subs, err := resolver.SubscriptionsForChain(chainName)
+	subs, err := resolver.Subscriptions()
 	if err != nil {
-		return nil, fmt.Errorf("failed to load Solana bridge configs for %s: %w", chainName, err)
+		return nil, fmt.Errorf("failed to load Solana bridge configs: %w", err)
 	}
 
 	subscriptions := make(map[[8]byte]*BridgeSubscription)
@@ -67,13 +67,7 @@ func NewBridgeDetector(chainName string) (*BridgeDetector, error) {
 		subscriptions:            subscriptions,
 		instructionSubscriptions: instrSubs,
 		programIDs:               programIDs,
-		chainName:                chainName,
 	}, nil
-}
-
-// ChainName returns the chain this detector was constructed for.
-func (d *BridgeDetector) ChainName() string {
-	return d.chainName
 }
 
 // DetectFromLogs scans program logs for bridge events using log-mode detection.

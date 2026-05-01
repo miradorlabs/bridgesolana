@@ -7,7 +7,7 @@ import (
 )
 
 func TestDetectInstructionBridges_CCTPv1Source(t *testing.T) {
-	detector, err := NewBridgeDetector("solana")
+	detector, err := NewBridgeDetector()
 	if err != nil {
 		t.Fatalf("failed to create detector: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestDetectInstructionBridges_CCTPv1Source(t *testing.T) {
 }
 
 func TestDetectInstructionBridges_CCTPv1Destination(t *testing.T) {
-	detector, err := NewBridgeDetector("solana")
+	detector, err := NewBridgeDetector()
 	if err != nil {
 		t.Fatalf("failed to create detector: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestDetectInstructionBridges_CCTPv1Destination(t *testing.T) {
 }
 
 func TestDetectInstructionBridges_NoMatch(t *testing.T) {
-	detector, err := NewBridgeDetector("solana")
+	detector, err := NewBridgeDetector()
 	if err != nil {
 		t.Fatalf("failed to create detector: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestDetectInstructionBridges_NoMatch(t *testing.T) {
 }
 
 func TestDetectInstructionBridges_ProgramScopedCorrectly(t *testing.T) {
-	detector, err := NewBridgeDetector("solana")
+	detector, err := NewBridgeDetector()
 	if err != nil {
 		t.Fatalf("failed to create detector: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestDetectInstructionBridges_ProgramScopedCorrectly(t *testing.T) {
 }
 
 func TestDetectInstructionBridges_V2Source(t *testing.T) {
-	detector, err := NewBridgeDetector("solana")
+	detector, err := NewBridgeDetector()
 	if err != nil {
 		t.Fatalf("failed to create detector: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestDetectInstructionBridges_V2Source(t *testing.T) {
 
 func TestDetectFromLogs_NoLogModeSubscriptions(t *testing.T) {
 	// All bundled CCTP configs are instruction-mode; DetectFromLogs should find nothing.
-	detector, err := NewBridgeDetector("solana")
+	detector, err := NewBridgeDetector()
 	if err != nil {
 		t.Fatalf("failed to create detector: %v", err)
 	}
@@ -144,19 +144,9 @@ func TestDetectFromLogs_NoLogModeSubscriptions(t *testing.T) {
 	}
 }
 
-func TestNewBridgeDetector_ChainName(t *testing.T) {
-	detector, err := NewBridgeDetector("solana")
-	if err != nil {
-		t.Fatalf("failed to create detector: %v", err)
-	}
-	if detector.ChainName() != "solana" {
-		t.Fatalf("expected chain name 'solana', got %q", detector.ChainName())
-	}
-}
-
 func TestResolver_ProgramIDs(t *testing.T) {
 	r := NewResolver(zap.NewNop())
-	ids, err := r.ProgramIDs("solana")
+	ids, err := r.ProgramIDs()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

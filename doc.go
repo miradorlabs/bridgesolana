@@ -1,7 +1,7 @@
 // Package bridgesolana detects cross-chain bridge events from Solana program logs.
 //
-// Build a BridgeDetector once per chain, then hand it the raw log strings
-// from a Solana transaction. The detector supports two detection modes:
+// Build a BridgeDetector once at process start, then hand it the raw log
+// strings from a Solana transaction. The detector supports two detection modes:
 //
 //   - Log mode: scans "Program data:" lines, decodes base64, matches 8-byte
 //     Anchor discriminators, and returns BridgeDetails with the bridge name,

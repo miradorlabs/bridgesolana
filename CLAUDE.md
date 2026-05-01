@@ -7,8 +7,8 @@ for conventions and workflow.
 ## Project
 
 `bridgesolana` is a Go library that identifies cross-chain bridge events in
-Solana transaction logs. Build a `BridgeDetector` once per chain, hand it
-the raw program log strings, and get back either `BridgeDetails`
+Solana transaction logs. Build a `BridgeDetector` once at process start,
+hand it the raw program log strings, and get back either `BridgeDetails`
 (self-contained, log mode) or `InstructionDetection` records that need RPC
 follow-up to extract the correlation ID (instruction mode).
 
@@ -19,9 +19,14 @@ follow-up to extract the correlation ID (instruction mode).
 - Status: pre-1.0. Breaking changes are allowed in `0.x.0` minor bumps;
   `0.x.y` patch releases never break callers.
 
-Bridge configs are embedded JSON under `config/<chain>/*.json` and loaded
-once via `sync.Once`. Currently only `config/solana/cctp.json` exists —
-Circle CCTP V1 and V2 source/destination legs.
+The package is Solana-only by design — every non-EVM L1 has its own log
+format and warrants its own package (`bridgesui`, `bridgeaptos`, …). The
+EVM equivalent (`github.com/miradorlabs/bridgeevm`) takes a `chainName`
+because Ethereum, Base, Arbitrum, etc. share one log format.
+
+Bridge configs are embedded JSON under `config/*.json` and loaded once
+via `sync.Once`. Currently only `config/cctp.json` exists — Circle CCTP
+V1 and V2 source/destination legs.
 
 ## Detection modes
 
@@ -154,17 +159,10 @@ messages from Solana → Base and Solana → Arbitrum transfers; the expected
 hashes were verified independently against the EVM `MessageReceived`
 topic.
 
-## Adding a new bridge on Solana
+## Adding a new bridge
 
 1. Add the program ID and event/instruction definition to
-   `config/solana/<bridge>.json`. The schema is documented in `config.go`.
+   `config/<bridge>.json`. The schema is documented in `config.go`.
 2. Extend `detector_test.go` with a log fixture for the new bridge.
 3. Update the coverage matrix in `README.md`.
-4. Open a PR with `feat(config): add <bridge> on solana`.
-
-## Adding a new chain
-
-1. Create `config/<chain>/<bridge>.json` files.
-2. The embed directive `//go:embed config/*/*.json` in `config.go` will
-   pick them up automatically.
-3. Update the coverage matrix in `README.md`.
+4. Open a PR with `feat(config): add <bridge>`.
