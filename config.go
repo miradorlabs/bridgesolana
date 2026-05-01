@@ -168,6 +168,10 @@ func validateInstructionMode(filename string, idx int, ev *bridgeEvent) error {
 		return fmt.Errorf("bridge config %s[%d] missing bridgeEvent.messageProgramId for instruction mode", filename, idx)
 	}
 	// Default destination dataHeaderSize: 8 bytes (anchor discriminator).
+	// A program whose instruction data is a bare Vec<u8> with no
+	// discriminator prefix cannot express headerSize=0 here — the
+	// zero-means-default pattern shadows it. No such program exists
+	// among Anchor-based bridges; revisit if one shows up.
 	if ev.Type == string(LegTypeDestination) && ev.DataHeaderSize == 0 {
 		ev.DataHeaderSize = 8
 	}

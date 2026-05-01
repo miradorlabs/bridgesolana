@@ -25,17 +25,26 @@ const correlationDelimiter = ":"
 // caller fed the wrong instruction data and should be treated as a
 // data-shape failure.
 //
+// matched=false can mean two distinct things: discriminator mismatch
+// (err=nil) or the discriminator matched but the body parse failed
+// (err!=nil). Callers must check err alongside matched — writing
+// `if !matched { continue }` alone silently drops parse errors.
+//
 // For source legs (AccountDiscriminator non-zero), pass the full source
 // account data including its leading 8-byte Anchor discriminator. Resolve
 // verifies the discriminator, parses the account body, and returns
-// (id, true, nil) on success. The account layout is described by the
-// per-bridge config (header length is supplied by the bridge config; the
-// body that follows is a Borsh Vec<u8> message payload).
+// (id, true, nil) on success.
 //
 // For destination legs (AccountDiscriminator zero), pass the full
 // destination instruction data including its leading 8-byte Anchor
 // instruction discriminator. Resolve verifies the discriminator,
 // extracts the message bytes, and returns (id, true, nil) on success.
+//
+// Resolve dispatches between source and destination by AccountDiscriminator
+// being non-zero. This encodes the "source = account, destination =
+// instruction data" pattern that fits every Anchor bridge surveyed so
+// far. A future bridge with an account-backed destination leg would need
+// an explicit LegType field on Resolution.
 //
 // Data-shape errors past the discriminator gate (truncated payload,
 // malformed correlation field) return ("", false, err).
@@ -90,7 +99,11 @@ func extractCorrelationFields(data []byte, fields []correlationField) (string, e
 // extractVecPayload reads a Borsh Vec<u8> body that follows a
 // fixed-size header. Layout: header(headerSize) + Vec<u8> (4-byte
 // little-endian length prefix + data). The header is opaque to this
-// function; per-bridge configs supply the byte count.
+// function; per-bridge configs supply the byte count, and headerSize
+// of 0 is valid (the Vec<u8> starts at offset 0). The little-endian
+// length prefix matches Borsh, which is what every Anchor program
+// uses; programs with a different wire format would need a new
+// extraction primitive, not just config.
 func extractVecPayload(data []byte, headerSize int) ([]byte, error) {
 	if len(data) < headerSize+4 {
 		return nil, fmt.Errorf("data too short: need %d bytes, have %d", headerSize+4, len(data))

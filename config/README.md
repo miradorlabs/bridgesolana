@@ -104,7 +104,7 @@ that begins after the first `dataHeaderSize` bytes.
 |----------------------------|----------|-------|
 | `messageProgramId`         | yes      | Program executing the destination instruction. |
 | `instructionDiscriminator` | yes      | 8-byte hex (16 chars) of the Anchor instruction discriminator (`sha256("global:<snake_case_name>")[:8]`). Verified by `Resolve`; mismatched bytes return `matched=false` to guard against the caller passing the wrong data. |
-| `dataHeaderSize`           | no       | Total bytes before the `Vec<u8>` length prefix, **including** the 8-byte Anchor instruction discriminator. Defaults to 8 — matching Anchor's convention where the discriminator is the entire header. Override when the program wraps the discriminator with extra fixed-size fields. |
+| `dataHeaderSize`           | no       | Total bytes before the `Vec<u8>` length prefix, **including** the 8-byte Anchor instruction discriminator. Defaults to 8 — matching Anchor's convention where the discriminator is the entire header. Override when the program wraps the discriminator with extra fixed-size fields. The CCTP entries set `dataHeaderSize: 8` explicitly for documentation; omitting it is equivalent. |
 
 ## `correlation`
 
@@ -147,10 +147,12 @@ resulting string as opaque — it is only meaningful as an equality key.
    one). Run `go test ./...` — `validateBridgeConfig` will catch most
    schema errors at startup. The validation is in
    [`../config.go`](../config.go).
-2. If the layout is new (a non-CCTP source-account header, a
-   destination instruction with a non-Anchor 8-byte prefix, etc.), the
-   parsers in [`../extraction.go`](../extraction.go) need extending
-   too.
+2. If the on-chain layout is not expressible as
+   `header(N bytes) + Borsh Vec<u8>` with a 4-byte little-endian
+   length prefix, the extraction primitive in
+   [`../extraction.go`](../extraction.go) needs a new code path.
+   Otherwise the schema fields above are enough — no code changes
+   needed.
 3. Add a fixture-driven detector test under
    [`../detector_test.go`](../detector_test.go) and update the
    coverage matrix in [`../README.md`](../README.md).

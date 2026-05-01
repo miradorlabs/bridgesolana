@@ -42,6 +42,39 @@ func TestExtractVecPayload_LengthExceedsData(t *testing.T) {
 	}
 }
 
+func TestExtractVecPayload_ZeroHeader(t *testing.T) {
+	// No header — data starts with the Vec length prefix directly.
+	body := []byte{0xaa, 0xbb, 0xcc}
+	data := make([]byte, 4, 4+len(body))
+	binary.LittleEndian.PutUint32(data[:4], uint32(len(body)))
+	data = append(data, body...)
+
+	got, err := extractVecPayload(data, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !bytes.Equal(got, body) {
+		t.Fatalf("payload mismatch: got %x want %x", got, body)
+	}
+}
+
+func TestExtractVecPayload_EmptyVec(t *testing.T) {
+	// Header + zero-length Vec — should return an empty, non-nil slice.
+	data := make([]byte, 12)
+	// data[8:12] is already zero — vec length 0.
+
+	got, err := extractVecPayload(data, 8)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected non-nil slice, got nil")
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected empty slice, got %d bytes", len(got))
+	}
+}
+
 func TestExtractCorrelationFields_MatchesEVMFormat(t *testing.T) {
 	// EVM CCTP nonce is big-endian uint64 at offset 12 in the CCTP message.
 	// Solana extraction must produce the same decimal string format.

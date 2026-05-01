@@ -56,6 +56,10 @@ for _, det := range d.Detect(logs) {
     }
 
     correlationID, matched, err := det.Resolution.Resolve(data)
+    // Always check err before matched. matched=false with err!=nil
+    // means the discriminator matched but the body parse failed —
+    // logging it surfaces malformed on-chain data; checking only
+    // matched would silently drop the error.
     if err != nil {
         log.Printf("resolve %s: %v", det.BridgeName, err)
         continue
