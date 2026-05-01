@@ -34,6 +34,7 @@
       "name": "ReceiveMessage",
       "detectionMode": "instruction",
       "messageProgramId": "CCTPmbSD7gX1bxKPAmg77w8oFzNFpaQiQUWD43TKaecd",
+      "instructionDiscriminator": "26907fe11fe1ee19",
       "dataHeaderSize": 8,
       "correlation": [
         {
@@ -79,6 +80,7 @@
       "name": "ReceiveMessage",
       "detectionMode": "instruction",
       "messageProgramId": "CCTPV2Sm4AdWt5296sk4P66VBZ7bEhcARwFaaS9YPbeC",
+      "instructionDiscriminator": "26907fe11fe1ee19",
       "dataHeaderSize": 8,
       "correlation": [
         {

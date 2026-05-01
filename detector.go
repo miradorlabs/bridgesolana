@@ -100,9 +100,9 @@ func (d *BridgeDetector) Detect(logs []string) []Detection {
 				name := strings.TrimPrefix(trimmed, instrLogPrefix)
 				if sub, ok := d.instrSubs[instructionKey{programID: current, instructionName: name}]; ok {
 					res := sub.resolution
-					// Defensive copy: callers must not mutate detector state
-					// through Resolution.Correlation.
-					res.Correlation = cloneCorrelation(res.Correlation)
+					// Defensive copy: callers must not mutate detector
+					// state through Resolution's correlation slice.
+					res.correlation = cloneCorrelation(res.correlation)
 					out = append(out, Detection{
 						BridgeName:        sub.bridgeName,
 						BridgeDescription: sub.bridgeDesc,
@@ -141,16 +141,13 @@ func (d *BridgeDetector) addSubscription(cfg *bridgeConfig, progSet map[string]s
 			emittingProg = cfg.BridgeProgram.ProgramID
 		}
 
-		var accountDisc [8]byte
-		if cfg.BridgeEvent.AccountDiscriminator != "" {
-			b, err := hex.DecodeString(cfg.BridgeEvent.AccountDiscriminator)
-			if err != nil {
-				return fmt.Errorf("bridge %s: invalid accountDiscriminator hex %q: %w", cfg.BridgeName, cfg.BridgeEvent.AccountDiscriminator, err)
-			}
-			if len(b) != 8 {
-				return fmt.Errorf("bridge %s: accountDiscriminator must be 8 bytes, got %d", cfg.BridgeName, len(b))
-			}
-			copy(accountDisc[:], b)
+		accountDisc, err := parseDiscriminatorHex(cfg.BridgeName, "accountDiscriminator", cfg.BridgeEvent.AccountDiscriminator)
+		if err != nil {
+			return err
+		}
+		instrDisc, err := parseDiscriminatorHex(cfg.BridgeName, "instructionDiscriminator", cfg.BridgeEvent.InstructionDiscriminator)
+		if err != nil {
+			return err
 		}
 
 		key := instructionKey{programID: emittingProg, instructionName: cfg.BridgeEvent.Name}
@@ -159,10 +156,11 @@ func (d *BridgeDetector) addSubscription(cfg *bridgeConfig, progSet map[string]s
 			bridgeDesc: cfg.BridgeDescription,
 			legType:    legType,
 			resolution: Resolution{
-				MessageProgramID:     cfg.BridgeEvent.MessageProgramID,
-				AccountDiscriminator: accountDisc,
-				MessageVersion:       cfg.BridgeEvent.MessageVersion,
-				Correlation:          cloneCorrelation(cfg.BridgeEvent.Correlation),
+				MessageProgramID:         cfg.BridgeEvent.MessageProgramID,
+				AccountDiscriminator:     accountDisc,
+				messageVersion:           cfg.BridgeEvent.MessageVersion,
+				instructionDiscriminator: instrDisc,
+				correlation:              cloneCorrelation(cfg.BridgeEvent.Correlation),
 			},
 		}
 
@@ -191,7 +189,7 @@ func (d *BridgeDetector) matchLogData(currentProgram, b64 string) (Detection, bo
 	if !ok || sub.programID != currentProgram {
 		return Detection{}, false
 	}
-	correlationID, err := ExtractCorrelationFields(decoded, sub.correlation)
+	correlationID, err := extractCorrelationFields(decoded, sub.correlation)
 	if err != nil {
 		return Detection{}, false
 	}
@@ -208,7 +206,7 @@ type logSubscription struct {
 	bridgeName  string
 	bridgeDesc  string
 	legType     LegType
-	correlation []CorrelationField
+	correlation []correlationField
 }
 
 type instrSubscription struct {
@@ -234,8 +232,27 @@ func parseLegType(s string) (LegType, error) {
 	}
 }
 
-func cloneCorrelation(in []CorrelationField) []CorrelationField {
-	out := make([]CorrelationField, len(in))
+// parseDiscriminatorHex decodes an 8-byte discriminator hex string from
+// config. Empty input returns the zero discriminator (signaling the
+// gate is unused for this leg).
+func parseDiscriminatorHex(bridgeName, fieldName, value string) ([8]byte, error) {
+	var out [8]byte
+	if value == "" {
+		return out, nil
+	}
+	b, err := hex.DecodeString(value)
+	if err != nil {
+		return out, fmt.Errorf("bridge %s: invalid %s hex %q: %w", bridgeName, fieldName, value, err)
+	}
+	if len(b) != 8 {
+		return out, fmt.Errorf("bridge %s: %s must be 8 bytes, got %d", bridgeName, fieldName, len(b))
+	}
+	copy(out[:], b)
+	return out, nil
+}
+
+func cloneCorrelation(in []correlationField) []correlationField {
+	out := make([]correlationField, len(in))
 	copy(out, in)
 	return out
 }

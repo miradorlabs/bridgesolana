@@ -42,8 +42,8 @@ func TestDetect_CCTPv1Source(t *testing.T) {
 	if det.Resolution.AccountDiscriminator == ([8]byte{}) {
 		t.Fatal("Resolution.AccountDiscriminator must be set for source legs")
 	}
-	if det.Resolution.MessageVersion != 0 {
-		t.Fatalf("Resolution.MessageVersion = %d, want 0 (V1)", det.Resolution.MessageVersion)
+	if det.Resolution.messageVersion != 0 {
+		t.Fatalf("Resolution.messageVersion = %d, want 0 (V1)", det.Resolution.messageVersion)
 	}
 }
 
@@ -67,9 +67,13 @@ func TestDetect_CCTPv1Destination(t *testing.T) {
 	if det.Resolution == nil {
 		t.Fatal("Resolution must be non-nil")
 	}
-	// Destination legs leave AccountDiscriminator as zero.
+	// Destination legs leave AccountDiscriminator as zero and carry
+	// the ReceiveMessage instruction discriminator instead.
 	if det.Resolution.AccountDiscriminator != ([8]byte{}) {
 		t.Fatalf("AccountDiscriminator should be zero for destination legs, got %x", det.Resolution.AccountDiscriminator)
+	}
+	if det.Resolution.instructionDiscriminator == ([8]byte{}) {
+		t.Fatal("instructionDiscriminator must be set for destination legs (footgun guard)")
 	}
 }
 
@@ -115,8 +119,8 @@ func TestDetect_CCTPv2Source(t *testing.T) {
 	if got[0].BridgeName != "cctp-v2" {
 		t.Fatalf("BridgeName = %q, want cctp-v2", got[0].BridgeName)
 	}
-	if got[0].Resolution == nil || got[0].Resolution.MessageVersion != 1 {
-		t.Fatalf("expected V2 resolution (MessageVersion=1), got %+v", got[0].Resolution)
+	if got[0].Resolution == nil || got[0].Resolution.messageVersion != 1 {
+		t.Fatalf("expected V2 resolution (messageVersion=1), got %+v", got[0].Resolution)
 	}
 }
 
@@ -156,7 +160,7 @@ func TestDetect_LogMode(t *testing.T) {
 				bridgeName:  "test-bridge",
 				bridgeDesc:  "test bridge",
 				legType:     LegTypeSource,
-				correlation: []CorrelationField{{Offset: 8, Size: 8, Type: "uint64", Field: "nonce"}},
+				correlation: []correlationField{{Offset: 8, Size: 8, Type: "uint64", Field: "nonce"}},
 			},
 		},
 		instrSubs: map[instructionKey]*instrSubscription{},
@@ -207,7 +211,7 @@ func TestDetect_LogModeProgramScoped(t *testing.T) {
 				bridgeName:  "test-bridge",
 				bridgeDesc:  "test bridge",
 				legType:     LegTypeSource,
-				correlation: []CorrelationField{{Offset: 8, Size: 8, Type: "uint64", Field: "nonce"}},
+				correlation: []correlationField{{Offset: 8, Size: 8, Type: "uint64", Field: "nonce"}},
 			},
 		},
 		instrSubs: map[instructionKey]*instrSubscription{},

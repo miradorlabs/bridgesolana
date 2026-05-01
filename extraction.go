@@ -1,6 +1,7 @@
 package bridgesolana
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"math/big"
@@ -15,11 +16,65 @@ import (
 // the format is not part of the public contract.
 const correlationDelimiter = ":"
 
-// ExtractCorrelationFields extracts correlation field values from decoded
-// event data and joins them into a single opaque correlation ID. The
-// data parameter is the full decoded event bytes (including any 8-byte
-// discriminator).
-func ExtractCorrelationFields(data []byte, fields []CorrelationField) (string, error) {
+// Resolve extracts the correlation ID from raw on-chain data.
+//
+// Both legs gate parsing on the leading 8-byte Anchor discriminator and
+// return ("", false, nil) when it does not match — for source legs that
+// is the scan-and-skip signal callers use to walk a transaction's
+// candidate accounts; for destination legs it indicates the bytes did
+// not come from the expected ReceiveMessage instruction. Treat
+// matched=false as a data-shape failure on destination dispatch.
+//
+// For source legs (AccountDiscriminator non-zero), pass the full
+// MessageSent account data including the leading 8-byte Anchor
+// discriminator. Resolve verifies the discriminator, parses the
+// MessageSent layout (selected by messageVersion), and returns
+// (id, true, nil) on success.
+//
+// For destination legs (AccountDiscriminator zero), pass the
+// ReceiveMessage instruction data including its 8-byte Anchor
+// instruction discriminator. Resolve verifies the discriminator,
+// extracts the message bytes, and returns (id, true, nil) on success.
+//
+// Data-shape errors past the discriminator gate (truncated payload,
+// unsupported version, malformed fields) return ("", false, err).
+func (r *Resolution) Resolve(data []byte) (id string, matched bool, err error) {
+	if r.AccountDiscriminator == ([8]byte{}) {
+		if r.instructionDiscriminator != ([8]byte{}) {
+			if len(data) < 8 || !bytes.Equal(data[:8], r.instructionDiscriminator[:]) {
+				return "", false, nil
+			}
+		}
+		msgBytes, err := parseReceiveMessageInstructionData(data)
+		if err != nil {
+			return "", false, err
+		}
+		correlationID, err := extractCorrelationFields(msgBytes, r.correlation)
+		if err != nil {
+			return "", false, err
+		}
+		return correlationID, true, nil
+	}
+
+	if len(data) < 8 || !bytes.Equal(data[:8], r.AccountDiscriminator[:]) {
+		return "", false, nil
+	}
+	msgBytes, err := parseMessageSentAccount(data, r.messageVersion)
+	if err != nil {
+		return "", false, err
+	}
+	correlationID, err := extractCorrelationFields(msgBytes, r.correlation)
+	if err != nil {
+		return "", false, err
+	}
+	return correlationID, true, nil
+}
+
+// extractCorrelationFields extracts correlation field values from
+// decoded event data and joins them into a single opaque correlation
+// ID. The data parameter is the full decoded event bytes (including any
+// 8-byte discriminator).
+func extractCorrelationFields(data []byte, fields []correlationField) (string, error) {
 	if len(fields) == 0 {
 		return "", fmt.Errorf("no correlation fields configured")
 	}
@@ -36,17 +91,15 @@ func ExtractCorrelationFields(data []byte, fields []CorrelationField) (string, e
 	return strings.Join(parts, correlationDelimiter), nil
 }
 
-// ParseMessageSentAccount extracts CCTP message bytes from a MessageSent
-// account's raw data. Pass the version returned in
-// [Resolution.MessageVersion]; only 0 (CCTP V1) and 1 (CCTP V2) are
-// valid and any other value returns an error.
+// parseMessageSentAccount extracts CCTP message bytes from a MessageSent
+// account's raw data.
 //
 // Account layout:
 //   - V1 (version=0): discriminator(8) + rent_payer(32) + Vec<u8> at offset 40.
 //   - V2 (version=1): discriminator(8) + rent_payer(32) + created_at(8) + Vec<u8> at offset 48.
 //
 // Vec<u8> layout: 4-byte LE length prefix + data.
-func ParseMessageSentAccount(data []byte, version int) ([]byte, error) {
+func parseMessageSentAccount(data []byte, version int) ([]byte, error) {
 	var headerSize int
 	switch version {
 	case 0:
@@ -60,14 +113,10 @@ func ParseMessageSentAccount(data []byte, version int) ([]byte, error) {
 	return extractPayload(data, headerSize)
 }
 
-// ParseReceiveMessageInstructionData extracts CCTP message bytes from
+// parseReceiveMessageInstructionData extracts CCTP message bytes from
 // ReceiveMessage instruction data. Layout: Anchor discriminator(8) +
 // Vec<u8> (4-byte LE length + data).
-//
-// The 8-byte header skip is specific to CCTP's ReceiveMessage layout.
-// Bridges with a different destination instruction layout will need a
-// different parse helper.
-func ParseReceiveMessageInstructionData(data []byte) ([]byte, error) {
+func parseReceiveMessageInstructionData(data []byte) ([]byte, error) {
 	return extractPayload(data, 8)
 }
 
@@ -90,7 +139,7 @@ func extractPayload(data []byte, headerSize int) ([]byte, error) {
 	return data[dataStart:dataEnd], nil
 }
 
-func extractFieldValue(data []byte, field CorrelationField) (string, error) {
+func extractFieldValue(data []byte, field correlationField) (string, error) {
 	typ := strings.ToLower(strings.TrimSpace(field.Type))
 
 	// keccak256 hashes from offset to end; does not use field.Size.

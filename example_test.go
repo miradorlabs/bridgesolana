@@ -18,7 +18,7 @@ func ExampleNewBridgeDetector() {
 // log strings from a Solana transaction and read off each detection. A
 // Detection with a populated CorrelationID is fully resolved; one with a
 // non-nil Resolution requires the caller to fetch the relevant account or
-// instruction data from RPC and feed it through the package helpers.
+// instruction data from RPC and pass it to Resolution.Resolve.
 func ExampleBridgeDetector_Detect() {
 	d, _ := bridgesolana.NewBridgeDetector()
 

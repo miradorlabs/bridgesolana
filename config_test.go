@@ -1,0 +1,59 @@
+package bridgesolana
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestValidate_InstructionSource_RequiresAccountDiscriminator(t *testing.T) {
+	cfg := &bridgeConfig{
+		BridgeName:        "test",
+		BridgeDescription: "test bridge",
+		BridgeProgram:     bridgeProgram{ProgramID: "Prog11111111111111111111111111111111111111"},
+		BridgeEvent: bridgeEvent{
+			Type:             string(LegTypeSource),
+			Name:             "SendMessage",
+			DetectionMode:    detectionModeInstruction,
+			MessageProgramID: "Prog11111111111111111111111111111111111111",
+			MessageVersion:   0,
+			// AccountDiscriminator deliberately omitted.
+			Correlation: []correlationField{
+				{Offset: 12, Size: 8, Type: "uint64", Field: "nonce"},
+			},
+		},
+	}
+
+	err := validateBridgeConfig("test.json", 0, cfg)
+	if err == nil {
+		t.Fatal("expected validation error for instruction-mode source leg without accountDiscriminator")
+	}
+	if !strings.Contains(err.Error(), "accountDiscriminator") {
+		t.Fatalf("error should mention accountDiscriminator, got: %v", err)
+	}
+}
+
+func TestValidate_InstructionDestination_RequiresInstructionDiscriminator(t *testing.T) {
+	cfg := &bridgeConfig{
+		BridgeName:        "test",
+		BridgeDescription: "test bridge",
+		BridgeProgram:     bridgeProgram{ProgramID: "Prog11111111111111111111111111111111111111"},
+		BridgeEvent: bridgeEvent{
+			Type:             string(LegTypeDestination),
+			Name:             "ReceiveMessage",
+			DetectionMode:    detectionModeInstruction,
+			MessageProgramID: "Prog11111111111111111111111111111111111111",
+			// InstructionDiscriminator deliberately omitted.
+			Correlation: []correlationField{
+				{Offset: 12, Size: 8, Type: "uint64", Field: "nonce"},
+			},
+		},
+	}
+
+	err := validateBridgeConfig("test.json", 0, cfg)
+	if err == nil {
+		t.Fatal("expected validation error for instruction-mode destination leg without instructionDiscriminator")
+	}
+	if !strings.Contains(err.Error(), "instructionDiscriminator") {
+		t.Fatalf("error should mention instructionDiscriminator, got: %v", err)
+	}
+}

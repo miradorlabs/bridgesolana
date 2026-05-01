@@ -14,8 +14,10 @@ Build a `BridgeDetector` once at process start, then hand it the raw log strings
 
 A `Detection` carries the bridge identity (name, description, leg type) plus one of:
 
-- A populated `CorrelationID` — extracted in-band from an Anchor `Program data:` event. The detection is fully resolved.
-- A non-nil `Resolution` — the bridge fires through a CPI without emitting an event. The caller fetches the relevant on-chain data via RPC and feeds it through the package helpers (`ParseMessageSentAccount` / `ParseReceiveMessageInstructionData`, then `ExtractCorrelationFields`) to produce the correlation ID.
+- A populated `CorrelationID` — extracted in-band from an Anchor `Program data:` event. The detection is fully resolved; no RPC needed.
+- A non-nil `Resolution` — the bridge fires through a CPI without emitting an event. The caller fetches the relevant on-chain bytes via RPC and passes them to `Resolution.Resolve`, which parses and extracts the correlation ID in one step.
+
+## Usage
 
 ```go
 import "github.com/miradorlabs/bridgesolana"
@@ -25,21 +27,51 @@ if err != nil {
     log.Fatal(err)
 }
 
+// `logs` is the slice of "Program ..." strings from a transaction's
+// metadata (e.g. `meta.logMessages` from a getTransaction RPC response).
 for _, det := range d.Detect(logs) {
+    // Log-mode: the correlation ID is already on the detection.
     if det.Resolution == nil {
-        // Log-mode: correlation ID is already extracted.
         fmt.Printf("%s %s leg, correlation %s\n",
             det.BridgeName, det.BridgeLegType, det.CorrelationID)
         continue
     }
 
-    // Instruction-mode: fetch the message bytes via RPC, then extract.
-    msgBytes, _ := bridgesolana.ParseMessageSentAccount(accountData, det.Resolution.MessageVersion)
-    correlationID, _ := bridgesolana.ExtractCorrelationFields(msgBytes, det.Resolution.Correlation)
+    // Instruction-mode: resolve via RPC. What you fetch depends on the leg.
+    var data []byte
+    switch det.BridgeLegType {
+    case bridgesolana.LegTypeSource:
+        // Find the writable account in this transaction owned by
+        // det.Resolution.MessageProgramID whose first 8 bytes match
+        // det.Resolution.AccountDiscriminator. Resolve will re-check
+        // the discriminator and return matched=false if you guessed
+        // wrong, so it's also fine to call it on every candidate.
+        data = fetchAccountData(det.Resolution.MessageProgramID, det.Resolution.AccountDiscriminator)
+
+    case bridgesolana.LegTypeDestination:
+        // The bytes are the instruction data of the ReceiveMessage
+        // call to det.Resolution.MessageProgramID in this transaction.
+        data = fetchReceiveMessageInstructionData(det.Resolution.MessageProgramID)
+    }
+
+    correlationID, matched, err := det.Resolution.Resolve(data)
+    if err != nil {
+        log.Printf("resolve %s: %v", det.BridgeName, err)
+        continue
+    }
+    if !matched {
+        // Source leg: the candidate account didn't match the
+        // expected discriminator — try the next one.
+        // Destination leg: the bytes you passed don't look like the
+        // expected ReceiveMessage instruction data.
+        continue
+    }
     fmt.Printf("%s %s leg, correlation %s\n",
         det.BridgeName, det.BridgeLegType, correlationID)
 }
 ```
+
+Both legs gate parsing on the leading 8-byte Anchor discriminator. Source legs use `matched=false` as a scan-and-skip signal so callers can iterate candidate accounts cheaply. Destination legs use it as a wrong-data-type guard — there is no candidate iteration to do, so `matched=false` on a destination resolve indicates the caller fed the wrong bytes (e.g. account data instead of instruction data) and should be logged.
 
 ## Coverage
 
@@ -70,27 +102,15 @@ type Detection struct {
 type Resolution struct {
     MessageProgramID     string
     AccountDiscriminator [8]byte // source legs only (zero for destination)
-    MessageVersion       int     // 0 = V1, 1 = V2
-    Correlation          []CorrelationField
 }
 
-type CorrelationField struct {
-    Offset int
-    Size   int
-    Type   string
-    Field  string
-}
+func (r *Resolution) Resolve(data []byte) (id string, matched bool, err error)
 
 type LegType string
 const (
     LegTypeSource      LegType = "source"
     LegTypeDestination LegType = "destination"
 )
-
-// RPC follow-up helpers for instruction-mode detections.
-func ParseMessageSentAccount(data []byte, version int) ([]byte, error)
-func ParseReceiveMessageInstructionData(data []byte) ([]byte, error)
-func ExtractCorrelationFields(data []byte, fields []CorrelationField) (string, error)
 ```
 
 A `BridgeDetector` is read-only after construction and safe to share across goroutines.
@@ -105,7 +125,7 @@ Bridge configurations are embedded JSON, one file per protocol (currently `confi
 
 `Detect` is a streaming scan of the log lines that tracks the program invocation stack, so instruction names are only matched within their owning program's context.
 
-For instruction-mode source legs, the correlation ID lives in the on-chain `MessageSent` account whose layout depends on the message version (V1 vs V2). For destination legs, it lives in the `ReceiveMessage` instruction data. The `Resolution` returned with each detection carries everything the caller needs to fetch and parse it.
+For instruction-mode source legs, the correlation ID lives in the on-chain `MessageSent` account whose layout depends on the message version (V1 vs V2). For destination legs, it lives in the `ReceiveMessage` instruction data. The `Resolution` returned with each detection carries everything the caller needs to fetch the bytes; `Resolution.Resolve` then handles parsing and correlation-ID extraction in one step.
 
 ## License
 
