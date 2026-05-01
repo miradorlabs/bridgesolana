@@ -59,6 +59,60 @@ func TestValidate_InstructionSource_RequiresAccountDataHeaderSize(t *testing.T) 
 	}
 }
 
+func TestValidate_InstructionSource_RejectsNegativeAccountDataHeaderSize(t *testing.T) {
+	cfg := &bridgeConfig{
+		BridgeName:        "test",
+		BridgeDescription: "test bridge",
+		BridgeProgram:     bridgeProgram{ProgramID: "Prog11111111111111111111111111111111111111"},
+		BridgeEvent: bridgeEvent{
+			Type:                  string(LegTypeSource),
+			Name:                  "SendMessage",
+			DetectionMode:         detectionModeInstruction,
+			MessageProgramID:      "Prog11111111111111111111111111111111111111",
+			AccountDiscriminator:  "0102030405060708",
+			AccountDataHeaderSize: -1,
+			Correlation: []correlationField{
+				{Offset: 12, Size: 8, Type: "uint64", Field: "nonce"},
+			},
+		},
+	}
+
+	err := validateBridgeConfig("test.json", 0, cfg)
+	if err == nil {
+		t.Fatal("expected validation error for negative accountDataHeaderSize")
+	}
+	if !strings.Contains(err.Error(), "accountDataHeaderSize") {
+		t.Fatalf("error should mention accountDataHeaderSize, got: %v", err)
+	}
+}
+
+func TestValidate_InstructionDestination_RejectsNegativeDataHeaderSize(t *testing.T) {
+	cfg := &bridgeConfig{
+		BridgeName:        "test",
+		BridgeDescription: "test bridge",
+		BridgeProgram:     bridgeProgram{ProgramID: "Prog11111111111111111111111111111111111111"},
+		BridgeEvent: bridgeEvent{
+			Type:                     string(LegTypeDestination),
+			Name:                     "ReceiveMessage",
+			DetectionMode:            detectionModeInstruction,
+			MessageProgramID:         "Prog11111111111111111111111111111111111111",
+			InstructionDiscriminator: "0102030405060708",
+			DataHeaderSize:           -5,
+			Correlation: []correlationField{
+				{Offset: 12, Size: 8, Type: "uint64", Field: "nonce"},
+			},
+		},
+	}
+
+	err := validateBridgeConfig("test.json", 0, cfg)
+	if err == nil {
+		t.Fatal("expected validation error for negative dataHeaderSize")
+	}
+	if !strings.Contains(err.Error(), "dataHeaderSize") {
+		t.Fatalf("error should mention dataHeaderSize, got: %v", err)
+	}
+}
+
 func TestValidate_InstructionDestination_RequiresInstructionDiscriminator(t *testing.T) {
 	cfg := &bridgeConfig{
 		BridgeName:        "test",
