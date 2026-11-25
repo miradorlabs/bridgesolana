@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+**SOC 2:** read [SOC2.md](SOC2.md) before changing access, secrets, data handling, logging, infrastructure, CI or releases. Never weaken a control it lists.
+
 Project-specific guidance for Claude. Keep this file lean — it loads into
 every conversation. Codebase architecture lives in the code; this file is
 for conventions and workflow.
